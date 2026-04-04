@@ -5,12 +5,18 @@ FPP Web App - Facility Project Proposal
 Web interface for generating IBM FPP Excel reports
 """
 
-import os, sys, io
+import os, sys, io, smtplib
 from datetime import date
+from email.mime.multipart import MIMEMultipart
+from email.mime.text import MIMEText
+from email.mime.base import MIMEBase
+from email import encoders
+from PIL import Image as PILImage
 import streamlit as st
 import anthropic
 from openpyxl import Workbook
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+from openpyxl.drawing.image import Image as XLImage
 
 # ── Page config ───────────────────────────────────────────────────────────────
 st.set_page_config(
@@ -75,6 +81,51 @@ st.markdown("""
     label { font-weight: 600 !important; color: #1F3864 !important; }
 </style>
 """, unsafe_allow_html=True)
+
+# ── Email sender ─────────────────────────────────────────────────────────────
+def send_email(project_name, site, filename, excel_bytes, secrets):
+    try:
+        sender   = secrets.get("EMAIL_SENDER", "")
+        password = secrets.get("EMAIL_PASSWORD", "")
+        recipient = "tomer.cohen2@ibm.com"
+        if not sender or not password:
+            return False, "פרטי מייל חסרים ב-Secrets"
+
+        msg = MIMEMultipart()
+        msg["From"]    = sender
+        msg["To"]      = recipient
+        msg["Subject"] = f"נוצר FPP חדש – {project_name}"
+
+        body = f"""שלום תומר,
+
+נוצר FPP חדש במערכת Apleona FPP Generator.
+
+פרטים:
+• שם פרויקט: {project_name}
+• אתר: {site}
+• תאריך: {date.today().strftime('%d/%m/%Y')}
+• שם קובץ: {filename}
+
+הקובץ מצורף למייל זה.
+
+בברכה,
+מערכת FPP Generator – Apleona Israel
+"""
+        msg.attach(MIMEText(body, "plain", "utf-8"))
+
+        part = MIMEBase("application", "octet-stream")
+        part.set_payload(excel_bytes)
+        encoders.encode_base64(part)
+        part.add_header("Content-Disposition", f'attachment; filename="{filename}"')
+        msg.attach(part)
+
+        with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
+            server.login(sender, password)
+            server.sendmail(sender, recipient, msg.as_string())
+
+        return True, ""
+    except Exception as e:
+        return False, str(e)
 
 # ── Translation ───────────────────────────────────────────────────────────────
 def translate(client, text):
@@ -164,7 +215,7 @@ def generate_excel(data) -> bytes:
     # Row 13 – financial headers
     ws.row_dimensions[13].height = 28
     thf, thfl = _font(bold=True, color="FFFFFF"), _fill("2E75B6")
-    for col, hdr in enumerate(["Description","Unit Price","Quantity","UoM","Michlol net ILS","Fee","Apleona net ILS"],1):
+    for col, hdr in enumerate(["Description","Unit Price","Quantity","UoM","Michlol Net ILS","Fee","Apleona net ILS"],1):
         sc(ws.cell(row=13,column=col,value=hdr), font=thf, fill=thfl, align=_align("center"))
 
     # Rows 14-23 – items
@@ -234,9 +285,74 @@ def generate_excel(data) -> bytes:
     sc(ws.cell(row=trow,column=4,value=f"=SUM(D33:D{last})"), font=tf, fill=tfl, align=_align("right",wrap=False), fmt="#,##0.00")
     sc(ws.cell(row=trow,column=7,value=f"=SUM(G33:G{last})"), font=tf, fill=tfl, align=_align("right",wrap=False), fmt="#,##0.00")
 
-    ws.print_area = f"A1:G{trow}"
+    # Row after labor total – Grand Total
+    grow = trow + 1
+    ws.row_dimensions[grow].height = 22
+    ws.merge_cells(f"A{grow}:C{grow}")
+    sc(ws.cell(row=grow,column=1), "GRAND TOTAL (Materials + Labor)",
+       font=_font(bold=True, color="FFFFFF", size=10),
+       fill=_fill("1F3864"), align=_align())
+    for col in [2,3,5,6]:
+        ws.cell(row=grow,column=col).fill  = _fill("1F3864")
+        ws.cell(row=grow,column=col).border = br
+    # ST+OT labor total + Apleona net ILS total
+    sc(ws.cell(row=grow,column=4, value=f"=D{trow}+G{trow}+G24"),
+       font=_font(bold=True, color="FFFFFF", size=10),
+       fill=_fill("1F3864"), align=_align("right",wrap=False), fmt="#,##0.00")
+    ws.merge_cells(f"E{grow}:G{grow}")
+    sc(ws.cell(row=grow,column=5, value=f"=D{trow}+G{trow}+G24"),
+       font=_font(bold=True, color="FFFFFF", size=10),
+       fill=_fill("1F3864"), align=_align("right",wrap=False), fmt="#,##0.00")
+
+    ws.print_area = f"A1:G{grow}"
     ws.page_setup.orientation="landscape"; ws.page_setup.fitToPage=True
     ws.page_setup.fitToWidth=1; ws.page_setup.fitToHeight=0
+
+    # ── Photos sheet ──────────────────────────────────────────────────────────
+    if data.get("images"):
+        ps = wb.create_sheet("Photos & Attachments")
+        ps.column_dimensions["A"].width = 12
+        ps.column_dimensions["B"].width = 80
+        sc(ps["A1"], "Attachments", font=_font(bold=True, color="FFFFFF", size=11),
+           fill=_fill("1F3864"), align=_align("center"))
+        ps.merge_cells("A1:B1")
+        ps.row_dimensions[1].height = 24
+
+        cur_row = 2
+        for idx, (fname, img_bytes) in enumerate(data["images"], 1):
+            # label
+            ps.row_dimensions[cur_row].height = 16
+            sc(ps.cell(row=cur_row, column=1), f"File {idx}:",
+               font=_font(bold=True), fill=_fill("CFE2F3"), align=_align())
+            sc(ps.cell(row=cur_row, column=2), fname,
+               font=_font(), fill=_fill("F8F8F8"), align=_align())
+            cur_row += 1
+
+            try:
+                pil = PILImage.open(io.BytesIO(img_bytes))
+                # resize to max 600px wide keeping ratio
+                max_w = 600
+                if pil.width > max_w:
+                    ratio = max_w / pil.width
+                    pil = pil.resize((max_w, int(pil.height * ratio)), PILImage.LANCZOS)
+                img_buf = io.BytesIO()
+                fmt = pil.format or "PNG"
+                if fmt.upper() == "JPG":
+                    fmt = "JPEG"
+                pil.save(img_buf, format=fmt)
+                img_buf.seek(0)
+                xl_img = XLImage(img_buf)
+                xl_img.anchor = f"B{cur_row}"
+                ps.add_image(xl_img)
+                # calc approx row height needed (pixels / 0.75)
+                img_rows = max(1, int(pil.height / 14))
+                for r in range(cur_row, cur_row + img_rows):
+                    ps.row_dimensions[r].height = 14
+                cur_row += img_rows + 1
+            except Exception:
+                sc(ps.cell(row=cur_row, column=2), "(non-image file — see filename above)",
+                   font=_font(), fill=_fill("F8F8F8"), align=_align())
+                cur_row += 2
 
     buf = io.BytesIO()
     wb.save(buf)
@@ -288,7 +404,7 @@ if cost_items:
     st.markdown(f"""
     <div style="background:#ddeeff;border-radius:8px;padding:12px 18px;margin-top:12px;text-align:left">
         <b>תת-סה"כ לפני עמלה:</b> ₪{subtotal:,.2f} &nbsp;|&nbsp;
-        <b>סה"כ כולל 5% מיקלול + 6% עמלה:</b> <span style="color:#1F3864;font-size:1.1em">₪{total_with_fee:,.2f}</span>
+        <b>סה"כ כולל 5% מכלול + 6% עמלה:</b> <span style="color:#1F3864;font-size:1.1em">₪{total_with_fee:,.2f}</span>
     </div>
     """, unsafe_allow_html=True)
 
@@ -324,6 +440,21 @@ clarifications_he = st.text_area("הבהרות/הנחות (אופציונלי)",
                                   placeholder="לדוגמה: המחיר אינו כולל עבודות בנייה אזרחית")
 st.markdown('</div>', unsafe_allow_html=True)
 
+# ── Section 6: File Attachments ───────────────────────────────────────────────
+st.markdown('<div class="section-card"><div class="section-title">📎 קבצים מצורפים</div>', unsafe_allow_html=True)
+st.caption("ניתן לצרף תמונות או קבצים — יצורפו לאקסל בגיליון נפרד")
+uploaded_files = st.file_uploader(
+    "העלה תמונות / קבצים",
+    accept_multiple_files=True,
+    type=["png", "jpg", "jpeg", "gif", "bmp", "webp", "pdf"],
+    label_visibility="collapsed"
+)
+if uploaded_files:
+    st.success(f"✓ {len(uploaded_files)} קובץ/ים הועלו")
+    for f in uploaded_files:
+        st.caption(f"📄 {f.name}")
+st.markdown('</div>', unsafe_allow_html=True)
+
 # ── Generate ──────────────────────────────────────────────────────────────────
 st.markdown("<br>", unsafe_allow_html=True)
 if st.button("⚡ צור קובץ FPP"):
@@ -356,6 +487,8 @@ if st.button("⚡ צור קובץ FPP"):
                 while len(items_en) < 10:
                     items_en.append({"description":"","unit_price":0,"quantity":0,"uom":"-","fee":FEE})
 
+                images = [(f.name, f.read()) for f in uploaded_files] if uploaded_files else []
+
                 excel_bytes = generate_excel({
                     "project_name":   project_name_en,
                     "site":           site,
@@ -364,12 +497,47 @@ if st.button("⚡ צור קובץ FPP"):
                     "items":          items_en,
                     "clarifications": clari_en,
                     "labor_roles":    labor_data,
+                    "images":         images,
                 })
 
                 safe = "".join(c if c.isalnum() or c in " _-" else "_" for c in project_name_en)[:40].strip()
                 filename = f"FPP_{safe}_{site}_{date.today().strftime('%Y%m%d')}.xlsx"
 
-                st.success("✅ הקובץ מוכן להורדה!")
+                # ── Auto-save to Apleona folder ───────────────────────────────
+                SAVE_DIR = r"C:\Users\TomerCohen\Apleona Group\Apleona Israel - General\All Israel Clients\IBM\IBM 2026\FPP TO IBM-2026\APPLICETION"
+                saved_path = None
+                try:
+                    os.makedirs(SAVE_DIR, exist_ok=True)
+                    saved_path = os.path.join(SAVE_DIR, filename)
+                    with open(saved_path, "wb") as f:
+                        f.write(excel_bytes)
+                except Exception:
+                    pass  # running on cloud – skip local save
+
+                # ── Send email ───────────────────────────────────────────────
+                mail_ok, mail_err = send_email(
+                    project_name_en, site, filename, excel_bytes, st.secrets
+                )
+
+                # ── Success message ───────────────────────────────────────────
+                st.markdown(f"""
+                <div style="background:#e8f5e9;border:2px solid #43a047;border-radius:10px;
+                            padding:20px 24px;margin:16px 0;">
+                    <div style="font-size:1.3rem;font-weight:700;color:#2e7d32">
+                        ✅ הקובץ נוצר בהצלחה!
+                    </div>
+                    {"<div style='margin-top:8px;color:#1b5e20'>📁 נשמר אוטומטית בתיקייה:<br><code style='font-size:0.85rem'>" + SAVE_DIR + "</code></div>" if saved_path else ""}
+                    <div style="margin-top:10px;background:#fff3e0;border-radius:6px;
+                                padding:10px 14px;color:#e65100;font-weight:600">
+                        📨 הקובץ הועבר לתיקיית APLEONA לטיפול
+                    </div>
+                    <div style="margin-top:10px;background:{'#e3f2fd' if mail_ok else '#fce4ec'};border-radius:6px;
+                                padding:10px 14px;color:{'#0d47a1' if mail_ok else '#b71c1c'};font-weight:600">
+                        {'📧 מייל נשלח בהצלחה אל tomer.cohen2@ibm.com עם הקובץ המצורף' if mail_ok else f'⚠️ המייל לא נשלח: {mail_err}'}
+                    </div>
+                </div>
+                """, unsafe_allow_html=True)
+
                 st.download_button(
                     label="📥 הורד קובץ Excel",
                     data=excel_bytes,
