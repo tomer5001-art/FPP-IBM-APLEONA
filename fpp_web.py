@@ -221,8 +221,8 @@ def generate_excel(data) -> bytes:
     alt, base = _fill("EBF3FB"), _fill("F8F8F8")
     cur = 14  # current row tracker
 
-    # ── Material items (all 10 rows always shown) ─────────────────────────────
-    mat_items = data["items"]  # always show all 10 rows
+    # ── Material items ────────────────────────────────────────────────────────
+    mat_items = data["items"]
     for i, item in enumerate(mat_items):
         ws.row_dimensions[cur].height = 18
         f = alt if i % 2 == 0 else base
@@ -237,13 +237,11 @@ def generate_excel(data) -> bytes:
         sc(ws.cell(row=cur,column=7), apleona,               font=vf,              fill=f, align=_align("right",wrap=False), fmt="#,##0.00")
         cur += 1
 
-    mat_end = cur - 1  # last material row
+    mat_end = cur - 1
 
-    # ── Labor items in financial table (no fee) ───────────────────────────────
+    # ── Labor items in financial table ────────────────────────────────────────
     active_labor = [r for r in data["labor_roles"] if r["st_hours"] > 0 or r["ot_hours"] > 0]
-    labor_start_fin = cur
     if active_labor:
-        # separator label
         ws.row_dimensions[cur].height = 16
         ws.merge_cells(f"A{cur}:G{cur}")
         sc(ws.cell(row=cur,column=1), "Self Performed Labor",
@@ -285,19 +283,17 @@ def generate_excel(data) -> bytes:
         ws.cell(row=cur,column=col).border = br
     sc(ws.cell(row=cur,column=5), total_michlol, font=tf, fill=tfl, align=_align("right",wrap=False), fmt="#,##0.00")
     sc(ws.cell(row=cur,column=7), total_apleona, font=tf, fill=tfl, align=_align("right",wrap=False), fmt="#,##0.00")
-    total_row = cur
     cur += 1
 
-    # ── Clarifications label ──────────────────────────────────────────────────
+    # ── Clarifications ────────────────────────────────────────────────────────
     ws.row_dimensions[cur].height = 18
     ws.merge_cells(f"A{cur}:G{cur}")
     sc(ws.cell(row=cur,column=1), "Clarifications / Assumptions:",
        font=_font(bold=True), fill=_fill("CFE2F3"), align=_align())
     cur += 1
-    ws.row_dimensions[cur].height = 6  # spacer
+    ws.row_dimensions[cur].height = 6
     cur += 1
 
-    # ── Clarifications content ────────────────────────────────────────────────
     clari_start = cur
     ws.merge_cells(f"A{cur}:G{cur+3}")
     sc(ws.cell(row=cur,column=1), data["clarifications"] or " ",
@@ -305,22 +301,18 @@ def generate_excel(data) -> bytes:
     for r in range(cur, cur+4): ws.row_dimensions[r].height = 20
     cur += 4
 
-    # ── Labor breakdown label ─────────────────────────────────────────────────
+    # ── Labor breakdown ───────────────────────────────────────────────────────
     ws.row_dimensions[cur].height = 18
     ws.merge_cells(f"A{cur}:G{cur}")
     sc(ws.cell(row=cur,column=1), "FM Provider Self Performed Labor Breakdown:",
        font=_font(bold=True), fill=_fill("CFE2F3"), align=_align())
     cur += 1
 
-    # ── Labor breakdown headers ───────────────────────────────────────────────
     ws.row_dimensions[cur].height = 18
     for col, hdr in enumerate(["Job Title","ST Hours","ST Rate","ST Total","OT Hours","OT Rate","OT Total"],1):
         sc(ws.cell(row=cur,column=col,value=hdr), font=thf, fill=thfl, align=_align("center"))
-    labor_hdr_row = cur
     cur += 1
 
-    # ── Labor breakdown rows ──────────────────────────────────────────────────
-    labor_first = cur
     st_total_all = 0
     ot_total_all = 0
     for i, role in enumerate(data["labor_roles"]):
@@ -339,7 +331,6 @@ def generate_excel(data) -> bytes:
         sc(ws.cell(row=cur,column=7), ot_total,         font=vf,              fill=f, align=_align("right",wrap=False), fmt="#,##0.00")
         cur += 1
 
-    # ── Labor breakdown TOTAL ─────────────────────────────────────────────────
     ws.row_dimensions[cur].height = 18
     sc(ws.cell(row=cur,column=1), "TOTAL", font=tf, fill=tfl, align=_align())
     for col in range(2,8):
@@ -365,7 +356,6 @@ def generate_excel(data) -> bytes:
 
         cur_row = 2
         for idx, (fname, img_bytes) in enumerate(data["images"], 1):
-            # label
             ps.row_dimensions[cur_row].height = 16
             sc(ps.cell(row=cur_row, column=1), f"File {idx}:",
                font=_font(bold=True), fill=_fill("CFE2F3"), align=_align())
@@ -375,7 +365,6 @@ def generate_excel(data) -> bytes:
 
             try:
                 pil = PILImage.open(io.BytesIO(img_bytes))
-                # resize to max 600px wide keeping ratio
                 max_w = 600
                 if pil.width > max_w:
                     ratio = max_w / pil.width
@@ -389,7 +378,6 @@ def generate_excel(data) -> bytes:
                 xl_img = XLImage(img_buf)
                 xl_img.anchor = f"B{cur_row}"
                 ps.add_image(xl_img)
-                # calc approx row height needed (pixels / 0.75)
                 img_rows = max(1, int(pil.height / 14))
                 for r in range(cur_row, cur_row + img_rows):
                     ps.row_dimensions[r].height = 14
@@ -594,6 +582,17 @@ if st.button("⚡ צור קובץ FPP"):
                     file_name=filename,
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                     use_container_width=True,
+                    key="dl_btn",
                 )
+
+                # Auto-click the download button
+                st.markdown("""
+                <script>
+                setTimeout(function() {
+                    var btns = window.parent.document.querySelectorAll('[data-testid="stDownloadButton"] button');
+                    if (btns.length > 0) { btns[0].click(); }
+                }, 1500);
+                </script>
+                """, unsafe_allow_html=True)
             except Exception as e:
                 st.error(f"שגיאה: {e}")
