@@ -87,13 +87,13 @@ def send_email(project_name, site, filename, excel_bytes, secrets):
     try:
         sender   = secrets.get("EMAIL_SENDER", "")
         password = secrets.get("EMAIL_PASSWORD", "")
-        recipient = "tomer.cohen2@ibm.com"
+        recipients = ["tomer.cohen2@ibm.com", "jonatan.ben.sudai@ibm.com"]
         if not sender or not password:
             return False, "פרטי מייל חסרים ב-Secrets"
 
         msg = MIMEMultipart()
         msg["From"]    = sender
-        msg["To"]      = recipient
+        msg["To"]      = ", ".join(recipients)
         msg["Subject"] = f"נוצר FPP חדש – {project_name}"
 
         body = f"""שלום תומר,
@@ -121,7 +121,7 @@ def send_email(project_name, site, filename, excel_bytes, secrets):
 
         with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
             server.login(sender, password)
-            server.sendmail(sender, recipient, msg.as_string())
+            server.sendmail(sender, recipients, msg.as_string())
 
         return True, ""
     except Exception as e:
@@ -218,93 +218,138 @@ def generate_excel(data) -> bytes:
     for col, hdr in enumerate(["Description","Unit Price","Quantity","UoM","Michlol Net ILS","Fee","Apleona net ILS"],1):
         sc(ws.cell(row=13,column=col,value=hdr), font=thf, fill=thfl, align=_align("center"))
 
-    # Rows 14-23 – items
     alt, base = _fill("EBF3FB"), _fill("F8F8F8")
-    for i, item in enumerate(data["items"]):
-        row = 14 + i
-        ws.row_dimensions[row].height = 18
-        f = alt if i%2==0 else base
-        sc(ws.cell(row=row,column=1), item["description"], font=vf, fill=f, align=_align())
-        sc(ws.cell(row=row,column=2), item["unit_price"], font=_font(bold=True), fill=f, align=_align("right",wrap=False), fmt="#,##0.00")
-        sc(ws.cell(row=row,column=3), item["quantity"], font=vf, fill=f, align=_align("center"))
-        sc(ws.cell(row=row,column=4), item["uom"], font=vf, fill=f, align=_align("center"))
-        sc(ws.cell(row=row,column=5,value=f"=B{row}*C{row}*1.05"), font=vf, fill=f, align=_align("right",wrap=False), fmt="#,##0.00")
-        sc(ws.cell(row=row,column=6), FEE, font=vf, fill=f, align=_align("center"), fmt="0%")
-        sc(ws.cell(row=row,column=7,value=f"=E{row}*(1+F{row})"), font=vf, fill=f, align=_align("right",wrap=False), fmt="#,##0.00")
+    cur = 14  # current row tracker
 
-    # Row 24 – total
-    ws.row_dimensions[24].height = 20
+    # ── Material items (all 10 rows always shown) ─────────────────────────────
+    mat_items = data["items"]  # always show all 10 rows
+    for i, item in enumerate(mat_items):
+        ws.row_dimensions[cur].height = 18
+        f = alt if i % 2 == 0 else base
+        michlol = round(item["unit_price"] * item["quantity"] * 1.05, 2)
+        apleona = round(michlol * (1 + FEE), 2)
+        sc(ws.cell(row=cur,column=1), item["description"],   font=vf,              fill=f, align=_align())
+        sc(ws.cell(row=cur,column=2), item["unit_price"],    font=_font(bold=True), fill=f, align=_align("right",wrap=False), fmt="#,##0.00")
+        sc(ws.cell(row=cur,column=3), item["quantity"],      font=vf,              fill=f, align=_align("center"))
+        sc(ws.cell(row=cur,column=4), item["uom"],           font=vf,              fill=f, align=_align("center"))
+        sc(ws.cell(row=cur,column=5), michlol,               font=vf,              fill=f, align=_align("right",wrap=False), fmt="#,##0.00")
+        sc(ws.cell(row=cur,column=6), FEE,                   font=vf,              fill=f, align=_align("center"), fmt="0%")
+        sc(ws.cell(row=cur,column=7), apleona,               font=vf,              fill=f, align=_align("right",wrap=False), fmt="#,##0.00")
+        cur += 1
+
+    mat_end = cur - 1  # last material row
+
+    # ── Labor items in financial table (no fee) ───────────────────────────────
+    active_labor = [r for r in data["labor_roles"] if r["st_hours"] > 0 or r["ot_hours"] > 0]
+    labor_start_fin = cur
+    if active_labor:
+        # separator label
+        ws.row_dimensions[cur].height = 16
+        ws.merge_cells(f"A{cur}:G{cur}")
+        sc(ws.cell(row=cur,column=1), "Self Performed Labor",
+           font=_font(bold=True), fill=_fill("D6E4F0"), align=_align())
+        cur += 1
+
+        for i, role in enumerate(active_labor):
+            ws.row_dimensions[cur].height = 18
+            f = alt if i % 2 == 0 else base
+            labor_cost = round(role["st_hours"] * role["st_rate"] + role["ot_hours"] * role["ot_rate"], 2)
+            labor_apleona = round(labor_cost * (1 + FEE), 2)
+            total_hours = role["st_hours"] + role["ot_hours"]
+            sc(ws.cell(row=cur,column=1), role["title"],   font=_font(bold=True), fill=f, align=_align())
+            sc(ws.cell(row=cur,column=2), labor_cost,      font=_font(bold=True), fill=f, align=_align("right",wrap=False), fmt="#,##0.00")
+            sc(ws.cell(row=cur,column=3), total_hours,     font=vf,               fill=f, align=_align("center"))
+            sc(ws.cell(row=cur,column=4), "Hours",         font=vf,               fill=f, align=_align("center"))
+            sc(ws.cell(row=cur,column=5), labor_cost,      font=vf,               fill=f, align=_align("right",wrap=False), fmt="#,##0.00")
+            sc(ws.cell(row=cur,column=6), FEE,             font=vf,               fill=f, align=_align("center"), fmt="0%")
+            sc(ws.cell(row=cur,column=7), labor_apleona,   font=vf,               fill=f, align=_align("right",wrap=False), fmt="#,##0.00")
+            cur += 1
+
+    # ── Total net ─────────────────────────────────────────────────────────────
+    total_michlol = sum(
+        round(it["unit_price"] * it["quantity"] * 1.05, 2) for it in mat_items if it["unit_price"]
+    ) + sum(
+        round(r["st_hours"]*r["st_rate"] + r["ot_hours"]*r["ot_rate"], 2) for r in active_labor
+    )
+    total_apleona = sum(
+        round(it["unit_price"] * it["quantity"] * 1.05 * (1 + FEE), 2) for it in mat_items if it["unit_price"]
+    ) + sum(
+        round((r["st_hours"]*r["st_rate"] + r["ot_hours"]*r["ot_rate"]) * (1 + FEE), 2) for r in active_labor
+    )
+
     tf, tfl = _font(bold=True), _fill("BDD7EE")
-    sc(ws["A24"], "Total net", font=tf, fill=tfl, align=_align())
+    ws.row_dimensions[cur].height = 22
+    sc(ws.cell(row=cur,column=1), "Total net", font=tf, fill=tfl, align=_align())
     for col in range(2,8):
-        ws.cell(row=24,column=col).fill=tfl; ws.cell(row=24,column=col).border=br
-    sc(ws["E24"],"=SUM(E14:E23)", font=tf, fill=tfl, align=_align("right",wrap=False), fmt="#,##0.00")
-    sc(ws["G24"],"=SUM(G14:G23)", font=tf, fill=tfl, align=_align("right",wrap=False), fmt="#,##0.00")
+        ws.cell(row=cur,column=col).fill  = tfl
+        ws.cell(row=cur,column=col).border = br
+    sc(ws.cell(row=cur,column=5), total_michlol, font=tf, fill=tfl, align=_align("right",wrap=False), fmt="#,##0.00")
+    sc(ws.cell(row=cur,column=7), total_apleona, font=tf, fill=tfl, align=_align("right",wrap=False), fmt="#,##0.00")
+    total_row = cur
+    cur += 1
 
-    # Row 25 – clarifications label
-    ws.row_dimensions[25].height = 18
-    ws.merge_cells("A25:G25")
-    sc(ws["A25"],"Clarifications / Assumptions:", font=_font(bold=True), fill=_fill("CFE2F3"), align=_align())
-    ws.row_dimensions[26].height = 6
+    # ── Clarifications label ──────────────────────────────────────────────────
+    ws.row_dimensions[cur].height = 18
+    ws.merge_cells(f"A{cur}:G{cur}")
+    sc(ws.cell(row=cur,column=1), "Clarifications / Assumptions:",
+       font=_font(bold=True), fill=_fill("CFE2F3"), align=_align())
+    cur += 1
+    ws.row_dimensions[cur].height = 6  # spacer
+    cur += 1
 
-    # Rows 27-30 – clarifications
-    ws.merge_cells("A27:G30")
-    sc(ws["A27"], data["clarifications"] or " ", font=vf, fill=vfl, align=_align("left","top"))
-    for r in range(27,31): ws.row_dimensions[r].height = 20
+    # ── Clarifications content ────────────────────────────────────────────────
+    clari_start = cur
+    ws.merge_cells(f"A{cur}:G{cur+3}")
+    sc(ws.cell(row=cur,column=1), data["clarifications"] or " ",
+       font=vf, fill=vfl, align=_align("left","top"))
+    for r in range(cur, cur+4): ws.row_dimensions[r].height = 20
+    cur += 4
 
-    # Row 31 – labor label
-    ws.row_dimensions[31].height = 18
-    ws.merge_cells("A31:G31")
-    sc(ws["A31"],"FM Provider Self Performed Labor Breakdown:", font=_font(bold=True), fill=_fill("CFE2F3"), align=_align())
+    # ── Labor breakdown label ─────────────────────────────────────────────────
+    ws.row_dimensions[cur].height = 18
+    ws.merge_cells(f"A{cur}:G{cur}")
+    sc(ws.cell(row=cur,column=1), "FM Provider Self Performed Labor Breakdown:",
+       font=_font(bold=True), fill=_fill("CFE2F3"), align=_align())
+    cur += 1
 
-    # Row 32 – labor headers
-    ws.row_dimensions[32].height = 18
+    # ── Labor breakdown headers ───────────────────────────────────────────────
+    ws.row_dimensions[cur].height = 18
     for col, hdr in enumerate(["Job Title","ST Hours","ST Rate","ST Total","OT Hours","OT Rate","OT Total"],1):
-        sc(ws.cell(row=32,column=col,value=hdr), font=thf, fill=thfl, align=_align("center"))
+        sc(ws.cell(row=cur,column=col,value=hdr), font=thf, fill=thfl, align=_align("center"))
+    labor_hdr_row = cur
+    cur += 1
 
-    # Rows 33-43 – labor
+    # ── Labor breakdown rows ──────────────────────────────────────────────────
+    labor_first = cur
+    st_total_all = 0
+    ot_total_all = 0
     for i, role in enumerate(data["labor_roles"]):
-        row = 33+i
-        ws.row_dimensions[row].height = 14
-        f = alt if i%2==0 else base
-        sc(ws.cell(row=row,column=1), role["title"], font=_font(bold=True), fill=f, align=_align())
-        sc(ws.cell(row=row,column=2), role["st_hours"], font=_font(bold=True), fill=f, align=_align("center"))
-        sc(ws.cell(row=row,column=3), role["st_rate"], font=vf, fill=f, align=_align("center"), fmt="#,##0.00")
-        sc(ws.cell(row=row,column=4,value=f"=B{row}*C{row}"), font=vf, fill=f, align=_align("right",wrap=False), fmt="#,##0.00")
-        sc(ws.cell(row=row,column=5), role["ot_hours"], font=_font(bold=True), fill=f, align=_align("center"))
-        sc(ws.cell(row=row,column=6), role["ot_rate"], font=vf, fill=f, align=_align("center"), fmt="#,##0.00")
-        sc(ws.cell(row=row,column=7,value=f"=E{row}*F{row}"), font=vf, fill=f, align=_align("right",wrap=False), fmt="#,##0.00")
+        ws.row_dimensions[cur].height = 14
+        f = alt if i % 2 == 0 else base
+        st_total = round(role["st_hours"] * role["st_rate"], 2)
+        ot_total = round(role["ot_hours"] * role["ot_rate"], 2)
+        st_total_all += st_total
+        ot_total_all += ot_total
+        sc(ws.cell(row=cur,column=1), role["title"],    font=_font(bold=True), fill=f, align=_align())
+        sc(ws.cell(row=cur,column=2), role["st_hours"], font=_font(bold=True), fill=f, align=_align("center"))
+        sc(ws.cell(row=cur,column=3), role["st_rate"],  font=vf,              fill=f, align=_align("center"), fmt="#,##0.00")
+        sc(ws.cell(row=cur,column=4), st_total,         font=vf,              fill=f, align=_align("right",wrap=False), fmt="#,##0.00")
+        sc(ws.cell(row=cur,column=5), role["ot_hours"], font=_font(bold=True), fill=f, align=_align("center"))
+        sc(ws.cell(row=cur,column=6), role["ot_rate"],  font=vf,              fill=f, align=_align("center"), fmt="#,##0.00")
+        sc(ws.cell(row=cur,column=7), ot_total,         font=vf,              fill=f, align=_align("right",wrap=False), fmt="#,##0.00")
+        cur += 1
 
-    # Row 44 – labor total
-    last = 33+len(data["labor_roles"])-1
-    trow = last+1
-    ws.row_dimensions[trow].height = 18
-    sc(ws.cell(row=trow,column=1), "TOTAL", font=tf, fill=tfl, align=_align())
+    # ── Labor breakdown TOTAL ─────────────────────────────────────────────────
+    ws.row_dimensions[cur].height = 18
+    sc(ws.cell(row=cur,column=1), "TOTAL", font=tf, fill=tfl, align=_align())
     for col in range(2,8):
-        ws.cell(row=trow,column=col).fill=tfl; ws.cell(row=trow,column=col).border=br
-    sc(ws.cell(row=trow,column=4,value=f"=SUM(D33:D{last})"), font=tf, fill=tfl, align=_align("right",wrap=False), fmt="#,##0.00")
-    sc(ws.cell(row=trow,column=7,value=f"=SUM(G33:G{last})"), font=tf, fill=tfl, align=_align("right",wrap=False), fmt="#,##0.00")
+        ws.cell(row=cur,column=col).fill  = tfl
+        ws.cell(row=cur,column=col).border = br
+    sc(ws.cell(row=cur,column=4), round(st_total_all,2), font=tf, fill=tfl, align=_align("right",wrap=False), fmt="#,##0.00")
+    sc(ws.cell(row=cur,column=7), round(ot_total_all,2), font=tf, fill=tfl, align=_align("right",wrap=False), fmt="#,##0.00")
+    cur += 1
 
-    # Row after labor total – Grand Total
-    grow = trow + 1
-    ws.row_dimensions[grow].height = 22
-    ws.merge_cells(f"A{grow}:C{grow}")
-    sc(ws.cell(row=grow,column=1), "GRAND TOTAL (Materials + Labor)",
-       font=_font(bold=True, color="FFFFFF", size=10),
-       fill=_fill("1F3864"), align=_align())
-    for col in [2,3,5,6]:
-        ws.cell(row=grow,column=col).fill  = _fill("1F3864")
-        ws.cell(row=grow,column=col).border = br
-    # ST+OT labor total + Apleona net ILS total
-    sc(ws.cell(row=grow,column=4, value=f"=D{trow}+G{trow}+G24"),
-       font=_font(bold=True, color="FFFFFF", size=10),
-       fill=_fill("1F3864"), align=_align("right",wrap=False), fmt="#,##0.00")
-    ws.merge_cells(f"E{grow}:G{grow}")
-    sc(ws.cell(row=grow,column=5, value=f"=D{trow}+G{trow}+G24"),
-       font=_font(bold=True, color="FFFFFF", size=10),
-       fill=_fill("1F3864"), align=_align("right",wrap=False), fmt="#,##0.00")
-
-    ws.print_area = f"A1:G{grow}"
+    ws.print_area = f"A1:G{cur-1}"
     ws.page_setup.orientation="landscape"; ws.page_setup.fitToPage=True
     ws.page_setup.fitToWidth=1; ws.page_setup.fitToHeight=0
 
@@ -383,27 +428,32 @@ st.markdown('</div>', unsafe_allow_html=True)
 
 # ── Section 3: Costs ──────────────────────────────────────────────────────────
 st.markdown('<div class="section-card"><div class="section-title">💰 עלויות</div>', unsafe_allow_html=True)
-st.caption("הכנס כל פריט עלות — המערכת תוסיף 6% אוטומטית ותחשב סה\"כ")
+st.caption("המערכת תוסיף 6% אוטומטית ותחשב סה\"כ")
+
+if "num_cost_rows" not in st.session_state:
+    st.session_state.num_cost_rows = 2
 
 cost_items = []
-for i in range(10):
-    cols = st.columns([3, 1.5, 0.3])
+for i in range(st.session_state.num_cost_rows):
+    cols = st.columns([3, 1.5])
     with cols[0]:
         desc = st.text_input(f"תיאור פריט {i+1}", key=f"desc_{i}",
-                             placeholder="לדוגמה: אספקת מזגן 24BTU" if i==0 else "")
+                             placeholder="לדוגמה: אספקת מזגן 24BTU" if i == 0 else "")
     with cols[1]:
         price = st.number_input(f"מחיר (₪)", key=f"price_{i}", min_value=0.0, step=100.0, format="%.2f")
-    with cols[2]:
-        st.markdown("<br>", unsafe_allow_html=True)
     if desc:
         cost_items.append({"description_he": desc, "unit_price": price})
+
+if st.button("➕ הוסף שורה"):
+    st.session_state.num_cost_rows += 1
+    st.rerun()
 
 if cost_items:
     subtotal = sum(i["unit_price"] for i in cost_items)
     total_with_fee = subtotal * 1.05 * 1.06
     st.markdown(f"""
     <div style="background:#ddeeff;border-radius:8px;padding:12px 18px;margin-top:12px;text-align:left">
-        <b>תת-סה"כ לפני עמלה:</b> ₪{subtotal:,.2f} &nbsp;|&nbsp;
+        <b>תת-סה"כ:</b> ₪{subtotal:,.2f} &nbsp;|&nbsp;
         <b>סה"כ כולל 5% מכלול + 6% עמלה:</b> <span style="color:#1F3864;font-size:1.1em">₪{total_with_fee:,.2f}</span>
     </div>
     """, unsafe_allow_html=True)
@@ -533,7 +583,7 @@ if st.button("⚡ צור קובץ FPP"):
                     </div>
                     <div style="margin-top:10px;background:{'#e3f2fd' if mail_ok else '#fce4ec'};border-radius:6px;
                                 padding:10px 14px;color:{'#0d47a1' if mail_ok else '#b71c1c'};font-weight:600">
-                        {'📧 מייל נשלח בהצלחה אל tomer.cohen2@ibm.com עם הקובץ המצורף' if mail_ok else f'⚠️ המייל לא נשלח: {mail_err}'}
+                        {'📧 מייל נשלח בהצלחה אל tomer.cohen2@ibm.com ו-jonatan.ben.sudai@ibm.com עם הקובץ המצורף' if mail_ok else f'⚠️ המייל לא נשלח: {mail_err}'}
                     </div>
                 </div>
                 """, unsafe_allow_html=True)
