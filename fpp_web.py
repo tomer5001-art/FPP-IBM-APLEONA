@@ -219,7 +219,7 @@ def generate_excel(data) -> bytes:
         sc(ws.cell(row=13,column=col,value=hdr), font=thf, fill=thfl, align=_align("center"))
 
     alt, base = _fill("EBF3FB"), _fill("F8F8F8")
-    cur = 14  # current row tracker
+    cur = 14
 
     # ── Material items ────────────────────────────────────────────────────────
     mat_items = data["items"]
@@ -241,6 +241,7 @@ def generate_excel(data) -> bytes:
 
     # ── Labor items in financial table ────────────────────────────────────────
     active_labor = [r for r in data["labor_roles"] if r["st_hours"] > 0 or r["ot_hours"] > 0]
+    labor_start_fin = cur
     if active_labor:
         ws.row_dimensions[cur].height = 16
         ws.merge_cells(f"A{cur}:G{cur}")
@@ -311,6 +312,7 @@ def generate_excel(data) -> bytes:
     ws.row_dimensions[cur].height = 18
     for col, hdr in enumerate(["Job Title","ST Hours","ST Rate","ST Total","OT Hours","OT Rate","OT Total"],1):
         sc(ws.cell(row=cur,column=col,value=hdr), font=thf, fill=thfl, align=_align("center"))
+    labor_hdr_row = cur
     cur += 1
 
     st_total_all = 0
@@ -543,11 +545,18 @@ if st.button("⚡ צור קובץ FPP"):
 
                 # ── Auto-save to Apleona folder ───────────────────────────────
                 SAVE_DIR = r"C:\Users\TomerCohen\Apleona Group\Apleona Israel - General\All Israel Clients\IBM\IBM 2026\FPP TO IBM-2026\APPLICETION"
+                SAVE_DIR2 = r"C:\Users\TomerCohen\Apleona Group\Apleona Israel - General\Claude code"
                 saved_path = None
                 try:
                     os.makedirs(SAVE_DIR, exist_ok=True)
                     saved_path = os.path.join(SAVE_DIR, filename)
                     with open(saved_path, "wb") as f:
+                        f.write(excel_bytes)
+                except Exception:
+                    pass  # running on cloud – skip local save
+                try:
+                    os.makedirs(SAVE_DIR2, exist_ok=True)
+                    with open(os.path.join(SAVE_DIR2, filename), "wb") as f:
                         f.write(excel_bytes)
                 except Exception:
                     pass  # running on cloud – skip local save
