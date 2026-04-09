@@ -425,21 +425,23 @@ if "num_cost_rows" not in st.session_state:
 
 cost_items = []
 for i in range(st.session_state.num_cost_rows):
-    cols = st.columns([3, 1.5])
+    cols = st.columns([3, 1, 1.5])
     with cols[0]:
         desc = st.text_input(f"תיאור פריט {i+1}", key=f"desc_{i}",
                              placeholder="לדוגמה: אספקת מזגן 24BTU" if i == 0 else "")
     with cols[1]:
-        price = st.number_input(f"מחיר (₪)", key=f"price_{i}", min_value=0.0, step=100.0, format="%.2f")
+        qty = st.number_input("כמות", key=f"qty_{i}", min_value=1, step=1, value=1)
+    with cols[2]:
+        price = st.number_input(f"מחיר יחידה (₪)", key=f"price_{i}", min_value=0.0, step=100.0, format="%.2f")
     if desc:
-        cost_items.append({"description_he": desc, "unit_price": price})
+        cost_items.append({"description_he": desc, "unit_price": price, "quantity": qty})
 
 if st.button("➕ הוסף שורה"):
     st.session_state.num_cost_rows += 1
     st.rerun()
 
 if cost_items:
-    subtotal = sum(i["unit_price"] for i in cost_items)
+    subtotal = sum(i["unit_price"] * i["quantity"] for i in cost_items)
     total_with_fee = subtotal * 1.05 * 1.06
     st.markdown(f"""
     <div style="background:#ddeeff;border-radius:8px;padding:12px 18px;margin-top:12px;text-align:left">
@@ -520,8 +522,8 @@ if st.button("⚡ צור קובץ FPP"):
                     items_en.append({
                         "description": desc_en,
                         "unit_price":  item["unit_price"],
-                        "quantity":    1,
-                        "uom":         "Lump Sum",
+                        "quantity":    item["quantity"],
+                        "uom":         "Lump Sum" if item["quantity"] == 1 else "Units",
                         "fee":         FEE,
                     })
                 while len(items_en) < 10:
@@ -566,25 +568,6 @@ if st.button("⚡ צור קובץ FPP"):
                     project_name_en, site, filename, excel_bytes, st.secrets
                 )
 
-                # ── Success message ───────────────────────────────────────────
-                st.markdown(f"""
-                <div style="background:#e8f5e9;border:2px solid #43a047;border-radius:10px;
-                            padding:20px 24px;margin:16px 0;">
-                    <div style="font-size:1.3rem;font-weight:700;color:#2e7d32">
-                        ✅ הקובץ נוצר בהצלחה!
-                    </div>
-                    {"<div style='margin-top:8px;color:#1b5e20'>📁 נשמר אוטומטית בתיקייה:<br><code style='font-size:0.85rem'>" + SAVE_DIR + "</code></div>" if saved_path else ""}
-                    <div style="margin-top:10px;background:#fff3e0;border-radius:6px;
-                                padding:10px 14px;color:#e65100;font-weight:600">
-                        📨 הקובץ הועבר לתיקיית APLEONA לטיפול
-                    </div>
-                    <div style="margin-top:10px;background:{'#e3f2fd' if mail_ok else '#fce4ec'};border-radius:6px;
-                                padding:10px 14px;color:{'#0d47a1' if mail_ok else '#b71c1c'};font-weight:600">
-                        {'📧 מייל נשלח בהצלחה אל tomer.cohen2@ibm.com ו-jonatan.ben.sudai@ibm.com עם הקובץ המצורף' if mail_ok else f'⚠️ המייל לא נשלח: {mail_err}'}
-                    </div>
-                </div>
-                """, unsafe_allow_html=True)
-
                 st.download_button(
                     label="📥 הורד קובץ Excel",
                     data=excel_bytes,
@@ -594,13 +577,23 @@ if st.button("⚡ צור קובץ FPP"):
                     key="dl_btn",
                 )
 
-                # Auto-click the download button
+                # Beep + auto-click
                 st.markdown("""
                 <script>
                 setTimeout(function() {
+                    try {
+                        var ctx = new (window.AudioContext || window.webkitAudioContext)();
+                        var o = ctx.createOscillator();
+                        var g = ctx.createGain();
+                        o.connect(g); g.connect(ctx.destination);
+                        o.type = 'sine'; o.frequency.value = 880;
+                        g.gain.setValueAtTime(0.15, ctx.currentTime);
+                        g.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.3);
+                        o.start(ctx.currentTime); o.stop(ctx.currentTime + 0.3);
+                    } catch(e) {}
                     var btns = window.parent.document.querySelectorAll('[data-testid="stDownloadButton"] button');
                     if (btns.length > 0) { btns[0].click(); }
-                }, 1500);
+                }, 1000);
                 </script>
                 """, unsafe_allow_html=True)
             except Exception as e:
