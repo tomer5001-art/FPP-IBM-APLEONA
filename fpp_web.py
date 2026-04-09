@@ -5,7 +5,8 @@ FPP Web App - Facility Project Proposal
 Web interface for generating IBM FPP Excel reports
 """
 
-import os, io, smtplib, json, glob
+import os, io, smtplib, json, glob, base64
+import urllib.request, urllib.error
 from datetime import date
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
@@ -32,10 +33,13 @@ CONTRACT_NUMBERS = (
     "PA FM SOW-CW3796451-IBM Israel Ltd\n"
     "PA FM SOW-CW3796611-IBM Israel S&T Ltd"
 )
-PREPARED_BY = "Tomer Cohen"
-FEE         = 0.06
-SAVE_DIR    = r"C:\Users\TomerCohen\Apleona Group\Apleona Israel - General\All Israel Clients\IBM\IBM 2026\FPP TO IBM-2026\APPLICETION"
-SAVE_DIR2   = r"C:\Users\TomerCohen\Apleona Group\Apleona Israel - General\Claude code"
+PREPARED_BY      = "Tomer Cohen"
+FEE              = 0.06
+SAVE_DIR         = r"C:\Users\TomerCohen\Apleona Group\Apleona Israel - General\All Israel Clients\IBM\IBM 2026\FPP TO IBM-2026\APPLICETION"
+SAVE_DIR2        = r"C:\Users\TomerCohen\Apleona Group\Apleona Israel - General\Claude code"
+GITHUB_OWNER     = "Tomer5001"
+GITHUB_REPO      = "fpp-ibm-apleona"
+GITHUB_HIST_PATH = "history"
 
 LABOR_ROLES = [
     {"title": "Small Job Coordinator Sr",         "st_rate": 358.49, "ot_rate": 537.74},
@@ -87,28 +91,75 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# ── History helpers ───────────────────────────────────────────────────────────
-def load_fpp_history():
+# ── GitHub history helpers ────────────────────────────────────────────────────
+def _gh_headers(token):
+    return {
+        "Authorization": f"token {token}",
+        "Accept": "application/vnd.github.v3+json",
+        "Content-Type": "application/json",
+    }
+
+def github_save_json(payload, filename, token):
+    url     = f"https://api.github.com/repos/{GITHUB_OWNER}/{GITHUB_REPO}/contents/{GITHUB_HIST_PATH}/{filename}"
+    content = base64.b64encode(json.dumps(payload, ensure_ascii=False, indent=2).encode()).decode()
+    sha     = None
+    try:
+        req = urllib.request.Request(url, headers=_gh_headers(token))
+        with urllib.request.urlopen(req) as r:
+            sha = json.loads(r.read()).get("sha")
+    except Exception:
+        pass
+    body = {"message": f"FPP history: {filename}", "content": content}
+    if sha:
+        body["sha"] = sha
+    try:
+        req = urllib.request.Request(url, data=json.dumps(body).encode(),
+                                     headers=_gh_headers(token), method="PUT")
+        urllib.request.urlopen(req)
+        return True
+    except Exception:
+        return False
+
+def github_load_history(token):
+    url     = f"https://api.github.com/repos/{GITHUB_OWNER}/{GITHUB_REPO}/contents/{GITHUB_HIST_PATH}"
+    records = []
+    try:
+        req = urllib.request.Request(url, headers=_gh_headers(token))
+        with urllib.request.urlopen(req) as r:
+            files = json.loads(r.read())
+        for f in sorted(files, key=lambda x: x["name"], reverse=True):
+            if f["name"].endswith(".json"):
+                try:
+                    req2 = urllib.request.Request(f["download_url"])
+                    with urllib.request.urlopen(req2) as r2:
+                        records.append(json.loads(r2.read()))
+                except Exception:
+                    pass
+    except Exception:
+        pass
+    return records
+
+# ── Local history helpers ─────────────────────────────────────────────────────
+def local_save_json(payload, filename):
+    try:
+        os.makedirs(SAVE_DIR, exist_ok=True)
+        with open(os.path.join(SAVE_DIR, filename), "w", encoding="utf-8") as f:
+            json.dump(payload, f, ensure_ascii=False, indent=2)
+    except Exception:
+        pass
+
+def local_load_history():
     records = []
     try:
         for path in sorted(glob.glob(os.path.join(SAVE_DIR, "*.json")), reverse=True):
             try:
                 with open(path, encoding="utf-8") as f:
-                    data = json.load(f)
-                data["_path"] = path
-                records.append(data)
+                    records.append(json.load(f))
             except Exception:
                 pass
     except Exception:
         pass
     return records
-
-def save_fpp_json(payload, json_path):
-    try:
-        with open(json_path, "w", encoding="utf-8") as f:
-            json.dump(payload, f, ensure_ascii=False, indent=2)
-    except Exception:
-        pass
 
 # ── Email sender ─────────────────────────────────────────────────────────────
 def send_email(project_name, site, filename, excel_bytes, secrets):
@@ -118,34 +169,17 @@ def send_email(project_name, site, filename, excel_bytes, secrets):
         recipients = ["tomer.cohen2@ibm.com", "jonatan.ben.sudai@ibm.com"]
         if not sender or not password:
             return False, "פרטי מייל חסרים ב-Secrets"
-
         msg = MIMEMultipart()
         msg["From"]    = sender
         msg["To"]      = ", ".join(recipients)
         msg["Subject"] = f"נוצר FPP חדש – {project_name}"
-
-        body = f"""שלום תומר,
-
-נוצר FPP חדש במערכת Apleona FPP Generator.
-
-פרטים:
-• שם פרויקט: {project_name}
-• אתר: {site}
-• תאריך: {date.today().strftime('%d/%m/%Y')}
-• שם קובץ: {filename}
-
-הקובץ מצורף למייל זה.
-
-בברכה,
-מערכת FPP Generator – Apleona Israel
-"""
+        body = f"""שלום תומר,\n\nנוצר FPP חדש במערכת Apleona FPP Generator.\n\nפרטים:\n• שם פרויקט: {project_name}\n• אתר: {site}\n• תאריך: {date.today().strftime('%d/%m/%Y')}\n• שם קובץ: {filename}\n\nהקובץ מצורף למייל זה.\n\nבברכה,\nמערכת FPP Generator – Apleona Israel\n"""
         msg.attach(MIMEText(body, "plain", "utf-8"))
         part = MIMEBase("application", "octet-stream")
         part.set_payload(excel_bytes)
         encoders.encode_base64(part)
         part.add_header("Content-Disposition", f'attachment; filename="{filename}"')
         msg.attach(part)
-
         with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
             server.login(sender, password)
             server.sendmail(sender, recipients, msg.as_string())
@@ -189,27 +223,21 @@ def generate_excel(data) -> bytes:
     wb = Workbook()
     ws = wb.active
     ws.title = "Sheet1"
-
     for col, w in zip("ABCDEFG", [46, 15, 12, 12, 17, 8, 17]):
         ws.column_dimensions[col].width = w
-
     br = _b()
-
     ws.row_dimensions[1].height = 30
     ws.merge_cells("A1:G1")
     sc(ws["A1"], "Facility Project Proposal",
        font=_font(bold=True, color="FFFFFF", size=14),
        fill=_fill("1F3864"), align=_align("center"))
-
     lf, lfl = _font(bold=True), _fill("F8F8F8")
     vf, vfl = _font(), _fill("F8F8F8")
-
     def hrow(row, label, value, height=16, va=None):
         ws.row_dimensions[row].height = height
         ws.merge_cells(f"B{row}:G{row}")
         sc(ws[f"A{row}"], label, font=lf, fill=lfl, align=_align())
         sc(ws[f"B{row}"], value, font=vf, fill=vfl, align=va or _align())
-
     hrow(2, "Project Name:", data["project_name"])
     hrow(3, "Site:",         data["site"])
     hrow(4, "Contract #:",   CONTRACT_NUMBERS, height=70, va=_align("left","top"))
@@ -217,30 +245,23 @@ def generate_excel(data) -> bytes:
     ws["B5"].number_format = "DD/MM/YYYY"
     hrow(6, "Fixed Price or Estimate/Not to Exceed (NTE)", "Fixed")
     hrow(7, "Proposal Prepared by:", PREPARED_BY)
-
     ws.row_dimensions[8].height = 6
-
     ws.row_dimensions[9].height = 18
     ws.merge_cells("A9:G9")
     sc(ws["A9"], "Scope of Work:", font=_font(bold=True), fill=_fill("CFE2F3"), align=_align())
-
     ws.merge_cells("A10:G11")
     sc(ws["A10"], data["scope_of_work"], font=vf, fill=vfl, align=_align("left","top"))
     ws.row_dimensions[10].height = 65
     ws.row_dimensions[11].height = 65
-
     ws.row_dimensions[12].height = 18
     ws.merge_cells("A12:G12")
     sc(ws["A12"], "Financial Proposal:", font=_font(bold=True), fill=_fill("CFE2F3"), align=_align())
-
     ws.row_dimensions[13].height = 28
     thf, thfl = _font(bold=True, color="FFFFFF"), _fill("2E75B6")
     for col, hdr in enumerate(["Description","Unit Price","Quantity","UoM","Michlol Net ILS","Fee","Apleona net ILS"],1):
         sc(ws.cell(row=13,column=col,value=hdr), font=thf, fill=thfl, align=_align("center"))
-
     alt, base = _fill("EBF3FB"), _fill("F8F8F8")
     cur = 14
-
     mat_items = data["items"]
     for i, item in enumerate(mat_items):
         ws.row_dimensions[cur].height = 18
@@ -255,7 +276,6 @@ def generate_excel(data) -> bytes:
         sc(ws.cell(row=cur,column=6), FEE,                   font=vf,              fill=f, align=_align("center"), fmt="0%")
         sc(ws.cell(row=cur,column=7), apleona,               font=vf,              fill=f, align=_align("right",wrap=False), fmt="#,##0.00")
         cur += 1
-
     active_labor = [r for r in data["labor_roles"] if r["st_hours"] > 0 or r["ot_hours"] > 0]
     if active_labor:
         ws.row_dimensions[cur].height = 16
@@ -263,7 +283,6 @@ def generate_excel(data) -> bytes:
         sc(ws.cell(row=cur,column=1), "Self Performed Labor",
            font=_font(bold=True), fill=_fill("D6E4F0"), align=_align())
         cur += 1
-
         for i, role in enumerate(active_labor):
             ws.row_dimensions[cur].height = 18
             f = alt if i % 2 == 0 else base
@@ -278,28 +297,19 @@ def generate_excel(data) -> bytes:
             sc(ws.cell(row=cur,column=6), FEE,             font=vf,               fill=f, align=_align("center"), fmt="0%")
             sc(ws.cell(row=cur,column=7), labor_apleona,   font=vf,               fill=f, align=_align("right",wrap=False), fmt="#,##0.00")
             cur += 1
-
-    total_michlol = sum(
-        round(it["unit_price"] * it["quantity"] * 1.05, 2) for it in mat_items if it["unit_price"]
-    ) + sum(
-        round(r["st_hours"]*r["st_rate"] + r["ot_hours"]*r["ot_rate"], 2) for r in active_labor
-    )
-    total_apleona = sum(
-        round(it["unit_price"] * it["quantity"] * 1.05 * (1 + FEE), 2) for it in mat_items if it["unit_price"]
-    ) + sum(
-        round((r["st_hours"]*r["st_rate"] + r["ot_hours"]*r["ot_rate"]) * (1 + FEE), 2) for r in active_labor
-    )
-
+    total_michlol = sum(round(it["unit_price"]*it["quantity"]*1.05,2) for it in mat_items if it["unit_price"]) + \
+                    sum(round(r["st_hours"]*r["st_rate"]+r["ot_hours"]*r["ot_rate"],2) for r in active_labor)
+    total_apleona = sum(round(it["unit_price"]*it["quantity"]*1.05*(1+FEE),2) for it in mat_items if it["unit_price"]) + \
+                    sum(round((r["st_hours"]*r["st_rate"]+r["ot_hours"]*r["ot_rate"])*(1+FEE),2) for r in active_labor)
     tf, tfl = _font(bold=True), _fill("BDD7EE")
     ws.row_dimensions[cur].height = 22
     sc(ws.cell(row=cur,column=1), "Total net", font=tf, fill=tfl, align=_align())
     for col in range(2,8):
-        ws.cell(row=cur,column=col).fill   = tfl
+        ws.cell(row=cur,column=col).fill = tfl
         ws.cell(row=cur,column=col).border = br
     sc(ws.cell(row=cur,column=5), total_michlol, font=tf, fill=tfl, align=_align("right",wrap=False), fmt="#,##0.00")
     sc(ws.cell(row=cur,column=7), total_apleona, font=tf, fill=tfl, align=_align("right",wrap=False), fmt="#,##0.00")
     cur += 1
-
     ws.row_dimensions[cur].height = 18
     ws.merge_cells(f"A{cur}:G{cur}")
     sc(ws.cell(row=cur,column=1), "Clarifications / Assumptions:",
@@ -307,33 +317,27 @@ def generate_excel(data) -> bytes:
     cur += 1
     ws.row_dimensions[cur].height = 6
     cur += 1
-
     ws.merge_cells(f"A{cur}:G{cur+3}")
     sc(ws.cell(row=cur,column=1), data["clarifications"] or " ",
        font=vf, fill=vfl, align=_align("left","top"))
     for r in range(cur, cur+4): ws.row_dimensions[r].height = 20
     cur += 4
-
     ws.row_dimensions[cur].height = 18
     ws.merge_cells(f"A{cur}:G{cur}")
     sc(ws.cell(row=cur,column=1), "FM Provider Self Performed Labor Breakdown:",
        font=_font(bold=True), fill=_fill("CFE2F3"), align=_align())
     cur += 1
-
     ws.row_dimensions[cur].height = 18
     for col, hdr in enumerate(["Job Title","ST Hours","ST Rate","ST Total","OT Hours","OT Rate","OT Total"],1):
         sc(ws.cell(row=cur,column=col,value=hdr), font=thf, fill=thfl, align=_align("center"))
     cur += 1
-
-    st_total_all = 0
-    ot_total_all = 0
+    st_total_all = ot_total_all = 0
     for i, role in enumerate(data["labor_roles"]):
         ws.row_dimensions[cur].height = 14
         f = alt if i % 2 == 0 else base
         st_total = round(role["st_hours"] * role["st_rate"], 2)
         ot_total = round(role["ot_hours"] * role["ot_rate"], 2)
-        st_total_all += st_total
-        ot_total_all += ot_total
+        st_total_all += st_total; ot_total_all += ot_total
         sc(ws.cell(row=cur,column=1), role["title"],    font=_font(bold=True), fill=f, align=_align())
         sc(ws.cell(row=cur,column=2), role["st_hours"], font=_font(bold=True), fill=f, align=_align("center"))
         sc(ws.cell(row=cur,column=3), role["st_rate"],  font=vf,              fill=f, align=_align("center"), fmt="#,##0.00")
@@ -342,20 +346,17 @@ def generate_excel(data) -> bytes:
         sc(ws.cell(row=cur,column=6), role["ot_rate"],  font=vf,              fill=f, align=_align("center"), fmt="#,##0.00")
         sc(ws.cell(row=cur,column=7), ot_total,         font=vf,              fill=f, align=_align("right",wrap=False), fmt="#,##0.00")
         cur += 1
-
     ws.row_dimensions[cur].height = 18
     sc(ws.cell(row=cur,column=1), "TOTAL", font=tf, fill=tfl, align=_align())
     for col in range(2,8):
-        ws.cell(row=cur,column=col).fill   = tfl
+        ws.cell(row=cur,column=col).fill = tfl
         ws.cell(row=cur,column=col).border = br
     sc(ws.cell(row=cur,column=4), round(st_total_all,2), font=tf, fill=tfl, align=_align("right",wrap=False), fmt="#,##0.00")
     sc(ws.cell(row=cur,column=7), round(ot_total_all,2), font=tf, fill=tfl, align=_align("right",wrap=False), fmt="#,##0.00")
     cur += 1
-
     ws.print_area = f"A1:G{cur-1}"
     ws.page_setup.orientation="landscape"; ws.page_setup.fitToPage=True
     ws.page_setup.fitToWidth=1; ws.page_setup.fitToHeight=0
-
     if data.get("images"):
         ps = wb.create_sheet("Photos & Attachments")
         ps.column_dimensions["A"].width = 12
@@ -364,14 +365,11 @@ def generate_excel(data) -> bytes:
            fill=_fill("1F3864"), align=_align("center"))
         ps.merge_cells("A1:B1")
         ps.row_dimensions[1].height = 24
-
         cur_row = 2
         for idx, (fname, img_bytes) in enumerate(data["images"], 1):
             ps.row_dimensions[cur_row].height = 16
-            sc(ps.cell(row=cur_row, column=1), f"File {idx}:",
-               font=_font(bold=True), fill=_fill("CFE2F3"), align=_align())
-            sc(ps.cell(row=cur_row, column=2), fname,
-               font=_font(), fill=_fill("F8F8F8"), align=_align())
+            sc(ps.cell(row=cur_row,column=1), f"File {idx}:", font=_font(bold=True), fill=_fill("CFE2F3"), align=_align())
+            sc(ps.cell(row=cur_row,column=2), fname,          font=_font(),           fill=_fill("F8F8F8"), align=_align())
             cur_row += 1
             try:
                 pil = PILImage.open(io.BytesIO(img_bytes))
@@ -382,23 +380,17 @@ def generate_excel(data) -> bytes:
                 img_buf = io.BytesIO()
                 fmt = pil.format or "PNG"
                 if fmt.upper() == "JPG": fmt = "JPEG"
-                pil.save(img_buf, format=fmt)
-                img_buf.seek(0)
-                xl_img = XLImage(img_buf)
-                xl_img.anchor = f"B{cur_row}"
+                pil.save(img_buf, format=fmt); img_buf.seek(0)
+                xl_img = XLImage(img_buf); xl_img.anchor = f"B{cur_row}"
                 ps.add_image(xl_img)
                 img_rows = max(1, int(pil.height / 14))
-                for r in range(cur_row, cur_row + img_rows):
-                    ps.row_dimensions[r].height = 14
+                for r in range(cur_row, cur_row + img_rows): ps.row_dimensions[r].height = 14
                 cur_row += img_rows + 1
             except Exception:
-                sc(ps.cell(row=cur_row, column=2), "(non-image file — see filename above)",
+                sc(ps.cell(row=cur_row,column=2), "(non-image file — see filename above)",
                    font=_font(), fill=_fill("F8F8F8"), align=_align())
                 cur_row += 2
-
-    buf = io.BytesIO()
-    wb.save(buf)
-    return buf.getvalue()
+    buf = io.BytesIO(); wb.save(buf); return buf.getvalue()
 
 # ══════════════════════════════════════════════════════════════════════════════
 # UI
@@ -410,16 +402,15 @@ st.markdown("""
 </div>
 """, unsafe_allow_html=True)
 
-# ── Session state defaults ────────────────────────────────────────────────────
-if "num_cost_rows" not in st.session_state:
-    st.session_state.num_cost_rows = 2
-if "fpp_load" not in st.session_state:
-    st.session_state.fpp_load = {}
-
+if "num_cost_rows" not in st.session_state: st.session_state.num_cost_rows = 2
+if "fpp_load"      not in st.session_state: st.session_state.fpp_load = {}
 L = st.session_state.fpp_load
 
+gh_token = st.secrets.get("GITHUB_TOKEN", os.environ.get("GITHUB_TOKEN", ""))
+
 # ── Section 0: History ────────────────────────────────────────────────────────
-history = load_fpp_history()
+history = github_load_history(gh_token) if gh_token else local_load_history()
+
 if history:
     st.markdown('<div class="history-card">', unsafe_allow_html=True)
     st.markdown('<div class="section-title">📂 טען FPP קודם לעריכה</div>', unsafe_allow_html=True)
@@ -433,7 +424,7 @@ if history:
         rec = history[idx]
         if st.button("📂 טען לטופס"):
             st.session_state.fpp_load = rec
-            st.session_state.num_cost_rows = len(rec.get("cost_items", [{"x":1},{"x":2}]))
+            st.session_state.num_cost_rows = max(2, len(rec.get("cost_items", [])))
             st.rerun()
     if L:
         if st.button("🗑️ נקה טופס"):
@@ -447,28 +438,23 @@ if history:
 st.markdown('<div class="section-card"><div class="section-title">📋 פרטי הפרויקט</div>', unsafe_allow_html=True)
 col1, col2 = st.columns(2)
 with col1:
-    project_name = st.text_input("שם הפרויקט *",
-        value=L.get("project_name_he", ""),
+    project_name = st.text_input("שם הפרויקט *", value=L.get("project_name_he",""),
         placeholder="לדוגמה: החלפת מזגן במשרד PTK")
 with col2:
     site_default = L.get("site", SITES[0])
-    site_idx     = SITES.index(site_default) if site_default in SITES else 0
-    site = st.selectbox("אתר *", SITES, index=site_idx)
+    site = st.selectbox("אתר *", SITES, index=SITES.index(site_default) if site_default in SITES else 0)
 st.markdown('</div>', unsafe_allow_html=True)
 
 # ── Section 2: Scope of Work ──────────────────────────────────────────────────
 st.markdown('<div class="section-card"><div class="section-title">📝 מהות העבודה</div>', unsafe_allow_html=True)
 st.caption("תאר את העבודה בחופשיות בעברית — יתורגם לאנגלית מקצועית אוטומטית")
-scope_he = st.text_area("תיאור העבודה *",
-    value=L.get("scope_he", ""),
-    height=140,
+scope_he = st.text_area("תיאור העבודה *", value=L.get("scope_he",""), height=140,
     placeholder="לדוגמה:\nהחלפת יחידת מיזוג אוויר בקומה 3\nפירוק היחידה הישנה ופינוי לאתר פסולת מאושר\nהתקנת יחידה חדשה כולל בדיקות הרצה")
 st.markdown('</div>', unsafe_allow_html=True)
 
 # ── Section 3: Costs ──────────────────────────────────────────────────────────
 st.markdown('<div class="section-card"><div class="section-title">💰 עלויות</div>', unsafe_allow_html=True)
 st.caption("המערכת תוסיף 6% אוטומטית ותחשב סה\"כ")
-
 loaded_items = L.get("cost_items", [])
 cost_items = []
 for i in range(st.session_state.num_cost_rows):
@@ -476,22 +462,20 @@ for i in range(st.session_state.num_cost_rows):
     cols = st.columns([3, 1, 1.5])
     with cols[0]:
         desc = st.text_input(f"תיאור פריט {i+1}", key=f"desc_{i}",
-            value=prev.get("description_he", ""),
+            value=prev.get("description_he",""),
             placeholder="לדוגמה: אספקת מזגן 24BTU" if i == 0 else "")
     with cols[1]:
-        qty = st.number_input("כמות", key=f"qty_{i}",
-            min_value=1, step=1, value=int(prev.get("quantity", 1)))
+        qty = st.number_input("כמות", key=f"qty_{i}", min_value=1, step=1,
+            value=int(prev.get("quantity", 1)))
     with cols[2]:
         price = st.number_input("מחיר יחידה (₪)", key=f"price_{i}",
             min_value=0.0, step=100.0, format="%.2f",
             value=float(prev.get("unit_price", 0.0)))
     if desc:
         cost_items.append({"description_he": desc, "unit_price": price, "quantity": qty})
-
 if st.button("➕ הוסף שורה"):
     st.session_state.num_cost_rows += 1
     st.rerun()
-
 if cost_items:
     subtotal = sum(i["unit_price"] * i["quantity"] for i in cost_items)
     total_with_fee = subtotal * 1.05 * 1.06
@@ -500,23 +484,19 @@ if cost_items:
         <b>תת-סה"כ:</b> ₪{subtotal:,.2f} &nbsp;|&nbsp;
         <b>סה"כ כולל 5% מכלול + 6% עמלה:</b>
         <span style="color:#1F3864;font-size:1.1em">₪{total_with_fee:,.2f}</span>
-    </div>
-    """, unsafe_allow_html=True)
-
+    </div>""", unsafe_allow_html=True)
 st.markdown('</div>', unsafe_allow_html=True)
 
 # ── Section 4: Labor ──────────────────────────────────────────────────────────
 st.markdown('<div class="section-card"><div class="section-title">👷 שעות עובד נוסף</div>', unsafe_allow_html=True)
 st.caption("הכנס שעות לתפקידים הרלוונטיים בלבד (0 = לא רלוונטי)")
-
 loaded_labor = L.get("labor", {})
 labor_data = []
 for role in LABOR_ROLES:
-    prev_l  = loaded_labor.get(role["title"], {})
-    prev_st = int(prev_l.get("st_hours", 0))
-    prev_ot = int(prev_l.get("ot_hours", 0))
+    prev_l   = loaded_labor.get(role["title"], {})
+    prev_st  = int(prev_l.get("st_hours", 0))
+    prev_ot  = int(prev_l.get("ot_hours", 0))
     prev_hrs = prev_st + prev_ot
-
     col1, col2, col3 = st.columns([2.5, 1, 1.8])
     with col1:
         st.markdown(f"<span style='font-weight:600'>{role['title']}</span>", unsafe_allow_html=True)
@@ -533,33 +513,24 @@ for role in LABOR_ROLES:
             st_h = int(hours) if "ST" in shift else 0
             ot_h = int(hours) if "OT" in shift else 0
         else:
-            st.markdown("")
-            st_h = ot_h = 0
+            st.markdown(""); st_h = ot_h = 0
     labor_data.append({**role, "st_hours": st_h, "ot_hours": ot_h})
-
 st.markdown('</div>', unsafe_allow_html=True)
 
 # ── Section 5: Clarifications ─────────────────────────────────────────────────
 st.markdown('<div class="section-card"><div class="section-title">📌 הבהרות והנחות</div>', unsafe_allow_html=True)
-clarifications_he = st.text_area("הבהרות/הנחות (אופציונלי)",
-    value=L.get("clarifications_he", ""),
-    height=100,
-    placeholder="לדוגמה: המחיר אינו כולל עבודות בנייה אזרחית")
+clarifications_he = st.text_area("הבהרות/הנחות (אופציונלי)", value=L.get("clarifications_he",""),
+    height=100, placeholder="לדוגמה: המחיר אינו כולל עבודות בנייה אזרחית")
 st.markdown('</div>', unsafe_allow_html=True)
 
 # ── Section 6: File Attachments ───────────────────────────────────────────────
 st.markdown('<div class="section-card"><div class="section-title">📎 קבצים מצורפים</div>', unsafe_allow_html=True)
 st.caption("ניתן לצרף תמונות או קבצים — יצורפו לאקסל בגיליון נפרד")
-uploaded_files = st.file_uploader(
-    "העלה תמונות / קבצים",
-    accept_multiple_files=True,
-    type=["png", "jpg", "jpeg", "gif", "bmp", "webp", "pdf"],
-    label_visibility="collapsed"
-)
+uploaded_files = st.file_uploader("העלה תמונות / קבצים", accept_multiple_files=True,
+    type=["png","jpg","jpeg","gif","bmp","webp","pdf"], label_visibility="collapsed")
 if uploaded_files:
     st.success(f"✓ {len(uploaded_files)} קובץ/ים הועלו")
-    for f in uploaded_files:
-        st.caption(f"📄 {f.name}")
+    for f in uploaded_files: st.caption(f"📄 {f.name}")
 st.markdown('</div>', unsafe_allow_html=True)
 
 # ── Generate ──────────────────────────────────────────────────────────────────
@@ -576,11 +547,9 @@ if st.button("⚡ צור קובץ FPP"):
             try:
                 api_key = st.secrets.get("ANTHROPIC_API_KEY", os.environ.get("ANTHROPIC_API_KEY"))
                 client  = anthropic.Anthropic(api_key=api_key)
-
                 project_name_en = translate(client, project_name)
                 scope_en        = translate(client, scope_he)
                 clari_en        = translate(client, clarifications_he) if clarifications_he else ""
-
                 items_en = []
                 for item in cost_items:
                     desc_en = translate(client, item["description_he"])
@@ -593,9 +562,7 @@ if st.button("⚡ צור קובץ FPP"):
                     })
                 while len(items_en) < 10:
                     items_en.append({"description":"","unit_price":0,"quantity":0,"uom":"-","fee":FEE})
-
                 images = [(f.name, f.read()) for f in uploaded_files] if uploaded_files else []
-
                 excel_bytes = generate_excel({
                     "project_name":   project_name_en,
                     "site":           site,
@@ -606,24 +573,15 @@ if st.button("⚡ צור קובץ FPP"):
                     "labor_roles":    labor_data,
                     "images":         images,
                 })
-
                 safe     = "".join(c if c.isalnum() or c in " _-" else "_" for c in project_name_en)[:40].strip()
                 filename = f"FPP_{safe}_{site}_{date.today().strftime('%Y%m%d')}.xlsx"
-
-                # ── Save Excel ────────────────────────────────────────────────
-                saved_path = None
                 for sd in [SAVE_DIR, SAVE_DIR2]:
                     try:
                         os.makedirs(sd, exist_ok=True)
-                        p = os.path.join(sd, filename)
-                        with open(p, "wb") as f:
+                        with open(os.path.join(sd, filename), "wb") as f:
                             f.write(excel_bytes)
-                        if sd == SAVE_DIR:
-                            saved_path = p
                     except Exception:
                         pass
-
-                # ── Save JSON manifest ────────────────────────────────────────
                 json_payload = {
                     "project_name_he":   project_name,
                     "site":              site,
@@ -634,13 +592,12 @@ if st.button("⚡ צור קובץ FPP"):
                     "created_date":      date.today().strftime("%Y-%m-%d"),
                     "filename":          filename,
                 }
-                if saved_path:
-                    save_fpp_json(json_payload, saved_path.replace(".xlsx", ".json"))
-
-                # ── Send email ────────────────────────────────────────────────
+                json_filename = filename.replace(".xlsx", ".json")
+                if gh_token:
+                    github_save_json(json_payload, json_filename, gh_token)
+                else:
+                    local_save_json(json_payload, json_filename)
                 send_email(project_name_en, site, filename, excel_bytes, st.secrets)
-
-                # ── Download + beep ───────────────────────────────────────────
                 st.download_button(
                     label="📥 הורד קובץ Excel",
                     data=excel_bytes,
@@ -649,14 +606,12 @@ if st.button("⚡ צור קובץ FPP"):
                     use_container_width=True,
                     key="dl_btn",
                 )
-
                 st.markdown("""
                 <script>
                 setTimeout(function() {
                     try {
                         var ctx = new (window.AudioContext || window.webkitAudioContext)();
-                        var o = ctx.createOscillator();
-                        var g = ctx.createGain();
+                        var o = ctx.createOscillator(); var g = ctx.createGain();
                         o.connect(g); g.connect(ctx.destination);
                         o.type = 'sine'; o.frequency.value = 880;
                         g.gain.setValueAtTime(0.15, ctx.currentTime);
@@ -668,6 +623,5 @@ if st.button("⚡ צור קובץ FPP"):
                 }, 1000);
                 </script>
                 """, unsafe_allow_html=True)
-
             except Exception as e:
                 st.error(f"שגיאה: {e}")
