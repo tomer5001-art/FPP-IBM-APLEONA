@@ -166,7 +166,7 @@ def send_email(project_name, site, filename, excel_bytes, secrets):
     try:
         sender     = secrets.get("EMAIL_SENDER", "")
         password   = secrets.get("EMAIL_PASSWORD", "")
-        recipients = ["tomer.cohen2@ibm.com", "jonatan.ben.sudai@ibm.com"]
+        recipients = ["tomer.cohen2@ibm.com", "jonatan.ben.sudai@ibm.com", "Dorin.Michal.Daniel@ibm.com"]
         if not sender or not password:
             return False, "פרטי מייל חסרים ב-Secrets"
         msg = MIMEMultipart()
