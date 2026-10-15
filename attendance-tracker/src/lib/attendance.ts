@@ -1,14 +1,19 @@
 // Attendance rules and calculations. This is the single place that decides
 // what a day "is" and how many hours / leave days it counts for.
-import { dayOfWeek, isNormalWorkday, monthDates, yearDates, YEAR } from './dates';
-import type { DayRecord, DayStatus, SaveDayInput, Settings } from './types';
+import { dayOfWeek, monthDates, yearDates, YEAR } from './dates';
+import type { DayRecord, DayStatus, Holiday, SaveDayInput, Settings } from './types';
 
-export type Indicator = 'present' | 'vacation' | 'sick' | 'partial' | 'manual' | 'no_work' | 'weekend';
+export type Indicator = 'present' | 'vacation' | 'sick' | 'partial' | 'manual' | 'no_work' | 'weekend' | 'holiday';
+
+/** workday = normal Sun-Thu, eve = holiday eve on Sun-Thu (short day), holiday = no work, weekend = Fri/Sat. */
+export type DayKind = 'workday' | 'eve' | 'holiday' | 'weekend';
 
 export interface ComputedDay {
   date: string;
   dayOfWeek: number;
-  isNormalWorkday: boolean;
+  kind: DayKind;
+  holidayName: string | null;
+  isNormalWorkday: boolean; // a working day: Sun-Thu and not a holiday (eves included)
   isException: boolean; // a stored record exists for this day
   status: DayStatus;
   indicator: Indicator;
@@ -33,6 +38,7 @@ export interface Totals {
   sickDays: number;
   sickHours: number;
   manualWorkDays: number;
+  holidayDays: number; // holidays falling on Sunday-Thursday
 }
 
 /** Minutes since midnight for "HH:MM". */
@@ -48,8 +54,39 @@ export function hoursBetween(start: string | null | undefined, end: string | nul
   return diff > 0 ? diff / 60 : 0;
 }
 
+/** Length of a normal working day (8.5 h). Partial leave is a fraction of this. */
 export function normalDayHours(settings: Settings): number {
   return hoursBetween(settings.defaultStart, settings.defaultEnd);
+}
+
+const holidayIndex = new WeakMap<Holiday[], Map<string, Holiday>>();
+
+export function holidayOn(date: string, settings: Settings): Holiday | undefined {
+  const list = settings.holidays ?? [];
+  let map = holidayIndex.get(list);
+  if (!map) {
+    map = new Map(list.map((h) => [h.date, h]));
+    holidayIndex.set(list, map);
+  }
+  return map.get(date);
+}
+
+export function dayKind(date: string, settings: Settings): DayKind {
+  const h = holidayOn(date, settings);
+  if (h?.kind === 'holiday') return 'holiday';
+  if (dayOfWeek(date) >= 5) return 'weekend';
+  return h?.kind === 'eve' ? 'eve' : 'workday';
+}
+
+/** Sun-Thu and not a holiday. Holiday eves are working days. */
+export function isWorkingDay(date: string, settings: Settings): boolean {
+  const k = dayKind(date, settings);
+  return k === 'workday' || k === 'eve';
+}
+
+/** Default end of the working day: earlier on a holiday eve. */
+export function dayEnd(date: string, settings: Settings): string {
+  return dayKind(date, settings) === 'eve' ? settings.eveEnd : settings.defaultEnd;
 }
 
 export const round2 = (n: number) => Math.round(n * 100) / 100;
@@ -62,7 +99,7 @@ export function isPartialStatus(status: DayStatus): boolean {
   return status === 'partial_vacation' || status === 'partial_sick';
 }
 
-function indicatorFor(status: DayStatus, workday: boolean): Indicator {
+function indicatorFor(status: DayStatus, workday: boolean, kind: DayKind): Indicator {
   switch (status) {
     case 'present':
       return 'present';
@@ -76,28 +113,34 @@ function indicatorFor(status: DayStatus, workday: boolean): Indicator {
     case 'manual':
       return 'manual';
     case 'no_work':
-      return workday ? 'no_work' : 'weekend';
+      if (workday) return 'no_work';
+      return kind === 'holiday' ? 'holiday' : 'weekend';
   }
 }
 
 /** Resolve one day for one employee from the default rules + optional exception. */
 export function resolveDay(date: string, record: DayRecord | undefined, settings: Settings): ComputedDay {
   const dow = dayOfWeek(date);
-  const workday = isNormalWorkday(date);
+  const kind = dayKind(date, settings);
+  const workday = kind === 'workday' || kind === 'eve';
   const normal = normalDayHours(settings);
+  const end = dayEnd(date, settings);
+  const fullDay = hoursBetween(settings.defaultStart, end); // 8.5 h, or the short eve day
 
   const day: ComputedDay = {
     date,
     dayOfWeek: dow,
+    kind,
+    holidayName: holidayOn(date, settings)?.name ?? null,
     isNormalWorkday: workday,
     isException: !!record,
     status: workday ? 'present' : 'no_work',
-    indicator: workday ? 'present' : 'weekend',
+    indicator: workday ? 'present' : kind === 'holiday' ? 'holiday' : 'weekend',
     startTime: workday ? settings.defaultStart : null,
-    endTime: workday ? settings.defaultEnd : null,
+    endTime: workday ? end : null,
     leaveStart: null,
     leaveEnd: null,
-    workedHours: workday ? normal : 0,
+    workedHours: workday ? fullDay : 0,
     vacationHours: 0,
     sickHours: 0,
     vacationDays: 0,
@@ -108,7 +151,7 @@ export function resolveDay(date: string, record: DayRecord | undefined, settings
 
   const status = record.status;
   day.status = status;
-  day.indicator = indicatorFor(status, workday);
+  day.indicator = indicatorFor(status, workday, kind);
   day.notes = record.notes;
   day.startTime = null;
   day.endTime = null;
@@ -117,7 +160,7 @@ export function resolveDay(date: string, record: DayRecord | undefined, settings
   switch (status) {
     case 'present':
       day.startTime = record.startTime ?? settings.defaultStart;
-      day.endTime = record.endTime ?? settings.defaultEnd;
+      day.endTime = record.endTime ?? end;
       day.workedHours = hoursBetween(day.startTime, day.endTime);
       break;
     case 'manual':
@@ -126,11 +169,11 @@ export function resolveDay(date: string, record: DayRecord | undefined, settings
       day.workedHours = hoursBetween(day.startTime, day.endTime);
       break;
     case 'vacation':
-      day.vacationHours = normal;
+      day.vacationHours = fullDay;
       day.vacationDays = 1;
       break;
     case 'sick':
-      day.sickHours = normal;
+      day.sickHours = fullDay;
       day.sickDays = 1;
       break;
     case 'partial_vacation':
@@ -186,9 +229,11 @@ export function summarize(days: ComputedDay[]): Totals {
     sickDays: 0,
     sickHours: 0,
     manualWorkDays: 0,
+    holidayDays: 0,
   };
   for (const d of days) {
     if (d.isNormalWorkday) t.normalWorkingDays++;
+    if (d.kind === 'holiday' && d.dayOfWeek <= 4) t.holidayDays++;
     if (d.workedHours > 0) t.daysWorked++;
     if (d.status === 'manual') t.manualWorkDays++;
     t.workedHours += d.workedHours;
@@ -240,7 +285,8 @@ export const ERROR_MESSAGES: Record<string, string> = {
   leave_time_incomplete: 'Please enter both leave start and end times.',
   leave_time_invalid: 'The leave end time must be after the leave start time.',
   leave_time_required: 'Please enter the leave hours.',
-  leave_requires_workday: 'Leave can only be recorded on a normal working day (Sunday - Thursday).',
+  leave_requires_workday: 'Leave can only be recorded on a working day (Sunday - Thursday, not a holiday).',
+  invalid_kind: 'Please choose holiday or holiday eve.',
   time_overlap: 'Working hours and leave hours overlap.',
   invalid_name: 'Please enter a name.',
   invalid_role: 'Please choose a role.',
@@ -257,10 +303,10 @@ export function errorMessage(code: string): string {
 const TIME_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
 
 /** Returns null when valid, otherwise an error code. Normalises the input in place of the server. */
-export function validateDay(input: SaveDayInput, isAdmin: boolean): string | null {
-  const dow = dayOfWeek(input.date);
-  const workday = dow <= 4;
+export function validateDay(input: SaveDayInput, isAdmin: boolean, settings: Settings): string | null {
   if (!/^2026-\d{2}-\d{2}$/.test(input.date)) return 'date_out_of_range';
+  const dow = dayOfWeek(input.date);
+  const workday = isWorkingDay(input.date, settings);
   if (dow === 6 && !isAdmin) return 'saturday_admin_only';
   const s = input.status;
   for (const t of [input.startTime, input.endTime, input.leaveStart, input.leaveEnd]) {
@@ -289,12 +335,13 @@ export function validateDay(input: SaveDayInput, isAdmin: boolean): string | nul
 }
 
 /** For a partial leave, suggest the working part of the default day. */
-export function suggestWorkForLeave(leaveStart: string, leaveEnd: string, settings: Settings) {
+export function suggestWorkForLeave(leaveStart: string, leaveEnd: string, settings: Settings, date?: string) {
+  const endTime = date ? dayEnd(date, settings) : settings.defaultEnd;
   const ds = toMinutes(settings.defaultStart);
-  const de = toMinutes(settings.defaultEnd);
+  const de = toMinutes(endTime);
   const ls = toMinutes(leaveStart);
   const le = toMinutes(leaveEnd);
   if (ls > ds && le >= de) return { start: settings.defaultStart, end: leaveStart };
-  if (ls <= ds && le < de) return { start: leaveEnd, end: settings.defaultEnd };
+  if (ls <= ds && le < de) return { start: leaveEnd, end: endTime };
   return { start: '', end: '' };
 }

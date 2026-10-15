@@ -7,11 +7,13 @@ import {
   errorMessage,
   fmt,
   hoursBetween,
+  isWorkingDay,
   normalDayHours,
   suggestWorkForLeave,
   validateDay,
 } from '../lib/attendance';
-import { addDays, dayOfWeek, formatLongDate, isInYear, isNormalWorkday, todayIso } from '../lib/dates';
+import { addDays, dayOfWeek, formatLongDate, isInYear, todayIso } from '../lib/dates';
+import type { Settings } from '../lib/types';
 import type { DayStatus, SaveDayInput } from '../lib/types';
 
 type ReportType = 'vacation' | 'sick' | 'partial_vacation' | 'partial_sick' | 'manual';
@@ -29,11 +31,11 @@ function defaultDate(): string {
   return isInYear(t) ? t : '2026-01-01';
 }
 
-/** Working days (Sun-Thu) between two dates, inclusive. */
-function workdaysBetween(from: string, to: string): string[] {
+/** Working days (Sun-Thu, not holidays) between two dates, inclusive. */
+function workdaysBetween(from: string, to: string, settings: Settings): string[] {
   const out: string[] = [];
   if (!isInYear(from) || !isInYear(to) || to < from) return out;
-  for (let d = from; d <= to; d = addDays(d, 1)) if (isNormalWorkday(d)) out.push(d);
+  for (let d = from; d <= to; d = addDays(d, 1)) if (isWorkingDay(d, settings)) out.push(d);
   return out;
 }
 
@@ -59,7 +61,7 @@ export function ReportLeavePage() {
 
   const isFull = type === 'vacation' || type === 'sick';
   const isPartial = type === 'partial_vacation' || type === 'partial_sick';
-  const fullDays = useMemo(() => (isFull ? workdaysBetween(from, to) : []), [isFull, from, to]);
+  const fullDays = useMemo(() => (isFull ? workdaysBetween(from, to, settings) : []), [isFull, from, to, settings]);
   const existing = fullDays.filter((d) => data.records.some((r) => r.employeeId === employeeId && r.date === d)).length;
 
   function pickType(t: ReportType) {
@@ -81,7 +83,7 @@ export function ReportLeavePage() {
     setLeaveStart(ls);
     setLeaveEnd(le);
     if (ls && le) {
-      const w = suggestWorkForLeave(ls, le, settings);
+      const w = suggestWorkForLeave(ls, le, settings, from);
       setStart(w.start);
       setEnd(w.end);
     }
@@ -93,7 +95,7 @@ export function ReportLeavePage() {
     setDone('');
     let inputs: SaveDayInput[];
     if (isFull) {
-      if (fullDays.length === 0) return setError('There are no working days (Sunday - Thursday) in the selected dates.');
+      if (fullDays.length === 0) return setError('There are no working days (Sunday - Thursday, not holidays) in the selected dates.');
       inputs = fullDays.map((date) => ({ employeeId, date, status: type as DayStatus, notes }));
     } else {
       inputs = [
@@ -110,7 +112,7 @@ export function ReportLeavePage() {
       ];
     }
     for (const i of inputs) {
-      const err = validateDay(i, isAdmin);
+      const err = validateDay(i, isAdmin, settings);
       if (err) return setError(errorMessage(err));
     }
     setBusy(true);
@@ -175,7 +177,7 @@ export function ReportLeavePage() {
         {isFull && (
           <p className="muted small">
             {fullDays.length} working day{fullDays.length === 1 ? '' : 's'} = {fullDays.length} {type === 'vacation' ? 'vacation' : 'sick'} day
-            {fullDays.length === 1 ? '' : 's'}. Fridays and Saturdays are skipped.
+            {fullDays.length === 1 ? '' : 's'}. Fridays, Saturdays and holidays are skipped.
             {existing > 0 && ` ${existing} existing entr${existing === 1 ? 'y' : 'ies'} will be replaced.`}
           </p>
         )}

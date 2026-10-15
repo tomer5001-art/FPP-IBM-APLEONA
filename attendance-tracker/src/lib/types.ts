@@ -16,10 +16,18 @@ export interface Employee {
   active: boolean;
 }
 
+export interface Holiday {
+  date: string; // "YYYY-MM-DD"
+  name: string;
+  kind: 'holiday' | 'eve';
+}
+
 export interface Settings {
   year: number;
   defaultStart: string; // "HH:MM"
   defaultEnd: string;
+  eveEnd: string; // end of the working day on a holiday eve
+  holidays: Holiday[];
 }
 
 /** A stored exception for one employee-day. Days without one use the default rules. */
@@ -63,7 +71,7 @@ export interface AuditEntry {
   changedByName: string;
   employeeId: string | null;
   employeeName: string | null;
-  entity: 'day' | 'settings' | 'employee';
+  entity: 'day' | 'settings' | 'employee' | 'holiday';
   action: string;
   recordDate: string | null;
   previousValue: unknown;

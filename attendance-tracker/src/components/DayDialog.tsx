@@ -5,13 +5,14 @@ import {
   fmt,
   fmtHours,
   isPartialStatus,
+  isWorkingDay,
   normalDayHours,
   resolveDay,
   suggestWorkForLeave,
   validateDay,
   type ComputedDay,
 } from '../lib/attendance';
-import { dayOfWeek, formatLongDate, isNormalWorkday } from '../lib/dates';
+import { dayOfWeek, formatLongDate } from '../lib/dates';
 import { STATUS_LABELS, type DayRecord, type DayStatus } from '../lib/types';
 import { StatusBadge } from './StatusBadge';
 
@@ -23,7 +24,7 @@ export function DayDialog({ employeeId, day, onClose }: { employeeId: string; da
   const { data, isAdmin, employeeById, saveDay, resetDay } = useApp();
   const settings = data.settings;
   const employee = employeeById(employeeId);
-  const workday = isNormalWorkday(day.date);
+  const workday = isWorkingDay(day.date, settings);
   const readOnly = dayOfWeek(day.date) === 6 && !isAdmin;
 
   const [status, setStatus] = useState<DayStatus>(day.status);
@@ -46,7 +47,7 @@ export function DayDialog({ employeeId, day, onClose }: { employeeId: string; da
     setError('');
     if ((s === 'present' || s === 'manual') && !start && !end) {
       setStart(settings.defaultStart);
-      setEnd(settings.defaultEnd);
+      setEnd(day.kind === 'eve' ? settings.eveEnd : settings.defaultEnd);
     }
     if (isPartialStatus(s) && !leaveStart) {
       setStart('');
@@ -58,7 +59,7 @@ export function DayDialog({ employeeId, day, onClose }: { employeeId: string; da
     setLeaveStart(ls);
     setLeaveEnd(le);
     if (ls && le && !start && !end) {
-      const w = suggestWorkForLeave(ls, le, settings);
+      const w = suggestWorkForLeave(ls, le, settings, day.date);
       setStart(w.start);
       setEnd(w.end);
     }
@@ -94,7 +95,7 @@ export function DayDialog({ employeeId, day, onClose }: { employeeId: string; da
   }, [employeeId, day.date, status, start, end, leaveStart, leaveEnd, settings]);
 
   async function onSave() {
-    const err = validateDay(input, isAdmin);
+    const err = validateDay(input, isAdmin, settings);
     if (err) return setError(errorMessage(err));
     setBusy(true);
     try {
@@ -130,6 +131,11 @@ export function DayDialog({ employeeId, day, onClose }: { employeeId: string; da
           <div>
             <h2>{employee?.fullName}</h2>
             <p className="muted">{formatLongDate(day.date)}</p>
+            {day.holidayName && (
+              <p className={`badge ind-${day.kind === 'eve' ? 'partial' : 'holiday'}`}>
+                {day.kind === 'eve' ? `Holiday eve: ${day.holidayName} - work until ${settings.eveEnd}` : `Holiday: ${day.holidayName}`}
+              </p>
+            )}
           </div>
           <button type="button" className="btn btn-icon" onClick={onClose} aria-label="Close">
             ✕
@@ -165,7 +171,13 @@ export function DayDialog({ employeeId, day, onClose }: { employeeId: string; da
         {day.notes && <p className="note-box">{day.notes}</p>}
         {!day.isException && (
           <p className="muted small">
-            {workday ? 'Automatic working day (no report needed).' : 'Weekend - no automatic working hours.'}
+            {day.kind === 'eve'
+              ? `Holiday eve - automatic working day until ${settings.eveEnd}.`
+              : workday
+                ? 'Automatic working day (no report needed).'
+                : day.kind === 'holiday'
+                  ? 'Holiday - no automatic working hours.'
+                  : 'Weekend - no automatic working hours.'}
           </p>
         )}
 

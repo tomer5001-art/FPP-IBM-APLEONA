@@ -4,8 +4,8 @@
 // on this one device - use Supabase for real use.
 import type { Api } from './api';
 import { ApiError } from './api';
-import { hoursBetween, isPartialStatus, normalDayHours, validateDay } from '../lib/attendance';
-import { isNormalWorkday } from '../lib/dates';
+import { dayEnd, hoursBetween, isPartialStatus, isWorkingDay, validateDay } from '../lib/attendance';
+import { HOLIDAYS_2026 } from '../lib/holidays2026';
 import type { AuditEntry, DayRecord, Employee, SaveDayInput, Settings } from '../lib/types';
 
 export interface KeyValueStore {
@@ -59,7 +59,7 @@ async function seed(): Promise<DemoDb> {
   return {
     version: 1,
     employees,
-    settings: { year: 2026, defaultStart: '08:00', defaultEnd: '16:30' },
+    settings: { year: 2026, defaultStart: '08:00', defaultEnd: '16:30', eveEnd: '14:00', holidays: HOLIDAYS_2026.map((h) => ({ ...h })) },
     records: [],
     audit: [],
     sessions: [],
@@ -92,6 +92,9 @@ export function createDemoApi(store: KeyValueStore = window.localStorage): Api {
     if (raw) {
       try {
         cache = JSON.parse(raw) as DemoDb;
+        // Data saved before holidays existed.
+        cache.settings.eveEnd ??= '14:00';
+        cache.settings.holidays ??= HOLIDAYS_2026.map((h) => ({ ...h }));
         return cache;
       } catch {
         /* fall through and reseed */
@@ -165,7 +168,7 @@ export function createDemoApi(store: KeyValueStore = window.localStorage): Api {
       });
       return {
         me: publicEmployee(m),
-        settings: { ...db.settings },
+        settings: { ...db.settings, holidays: db.settings.holidays.map((h) => ({ ...h })) },
         employees: db.employees.filter((e) => visible(e.id)).sort((a, b) => a.createdAt - b.createdAt).map(publicEmployee),
         records: db.records.filter((r) => visible(r.employeeId)).map((r) => ({ ...r })),
         lastChanges,
@@ -175,11 +178,12 @@ export function createDemoApi(store: KeyValueStore = window.localStorage): Api {
     async saveDay(token, input: SaveDayInput) {
       const { db, me: m } = await me(token);
       assertAccess(db, m, input.employeeId);
-      const err = validateDay(input, m.role === 'admin');
+      const err = validateDay(input, m.role === 'admin', db.settings);
       if (err) throw new ApiError(err);
 
       const s = input.status;
-      const workday = isNormalWorkday(input.date);
+      const workday = isWorkingDay(input.date, db.settings);
+      const end0 = dayEnd(input.date, db.settings);
       const keepsWork = s === 'present' || s === 'manual' || isPartialStatus(s);
       const start = keepsWork ? input.startTime || null : null;
       const end = keepsWork ? input.endTime || null : null;
@@ -191,7 +195,7 @@ export function createDemoApi(store: KeyValueStore = window.localStorage): Api {
       const prev = idx >= 0 ? db.records[idx] : undefined;
       const isDefault =
         !notes &&
-        ((workday && s === 'present' && (!start || (start === db.settings.defaultStart && end === db.settings.defaultEnd))) ||
+        ((workday && s === 'present' && (!start || (start === db.settings.defaultStart && end === end0))) ||
           (!workday && s === 'no_work'));
 
       let next: DayRecord | undefined;
@@ -209,7 +213,7 @@ export function createDemoApi(store: KeyValueStore = window.localStorage): Api {
           leaveFullDay: leaveType ? full : null,
           leaveStart: ls,
           leaveEnd: le,
-          leaveHours: leaveType ? (full ? normalDayHours(db.settings) : hoursBetween(ls, le)) : null,
+          leaveHours: leaveType ? (full ? hoursBetween(db.settings.defaultStart, end0) : hoursBetween(ls, le)) : null,
           updatedAt: new Date().toISOString(),
         };
       }
@@ -237,13 +241,38 @@ export function createDemoApi(store: KeyValueStore = window.localStorage): Api {
       }
     },
 
-    async updateSettings(token, defaultStart, defaultEnd) {
+    async updateSettings(token, defaultStart, defaultEnd, eveEnd) {
       const { db, me: m } = await me(token);
       if (m.role !== 'admin') throw new ApiError('forbidden');
-      if (hoursBetween(defaultStart, defaultEnd) <= 0) throw new ApiError('work_time_invalid');
-      const prev = { default_start: db.settings.defaultStart, default_end: db.settings.defaultEnd };
-      db.settings = { ...db.settings, defaultStart, defaultEnd };
-      audit(db, m, { employeeId: null, entity: 'settings', action: 'update', recordDate: null, previousValue: prev, newValue: { default_start: defaultStart, default_end: defaultEnd } });
+      if (hoursBetween(defaultStart, defaultEnd) <= 0 || hoursBetween(defaultStart, eveEnd) <= 0) throw new ApiError('work_time_invalid');
+      const s = db.settings;
+      const prev = { default_start: s.defaultStart, default_end: s.defaultEnd, eve_end: s.eveEnd };
+      db.settings = { ...s, defaultStart, defaultEnd, eveEnd };
+      audit(db, m, { employeeId: null, entity: 'settings', action: 'update', recordDate: null, previousValue: prev, newValue: { default_start: defaultStart, default_end: defaultEnd, eve_end: eveEnd } });
+      save();
+    },
+
+    async saveHoliday(token, h) {
+      const { db, me: m } = await me(token);
+      if (m.role !== 'admin') throw new ApiError('forbidden');
+      const name = h.name.trim();
+      if (!/^2026-\d{2}-\d{2}$/.test(h.date)) throw new ApiError('date_out_of_range');
+      if (!name || name.length > 100) throw new ApiError('invalid_name');
+      if (h.kind !== 'holiday' && h.kind !== 'eve') throw new ApiError('invalid_kind');
+      const list = db.settings.holidays.filter((x) => x.date !== h.date);
+      const prev = db.settings.holidays.find((x) => x.date === h.date);
+      db.settings.holidays = [...list, { date: h.date, name, kind: h.kind }].sort((a, b) => a.date.localeCompare(b.date));
+      audit(db, m, { employeeId: null, entity: 'holiday', action: prev ? 'update' : 'create', recordDate: h.date, previousValue: prev ? { name: prev.name, kind: prev.kind } : null, newValue: { name, kind: h.kind } });
+      save();
+    },
+
+    async deleteHoliday(token, date) {
+      const { db, me: m } = await me(token);
+      if (m.role !== 'admin') throw new ApiError('forbidden');
+      const prev = db.settings.holidays.find((x) => x.date === date);
+      if (!prev) return;
+      db.settings.holidays = db.settings.holidays.filter((x) => x.date !== date);
+      audit(db, m, { employeeId: null, entity: 'holiday', action: 'delete', recordDate: date, previousValue: { name: prev.name, kind: prev.kind }, newValue: null });
       save();
     },
 

@@ -13,7 +13,10 @@ export interface ReportTable {
 }
 
 export function dayStatusLabel(d: ComputedDay): string {
-  return d.indicator === 'weekend' ? 'Weekend' : STATUS_LABELS[d.status];
+  if (d.indicator === 'holiday') return `Holiday - ${d.holidayName}`;
+  if (d.indicator === 'weekend') return 'Weekend';
+  const label = STATUS_LABELS[d.status];
+  return d.kind === 'eve' && d.holidayName ? `${label} (${d.holidayName})` : label;
 }
 
 export function monthlyTotalsList(t: Totals): [string, string][] {
@@ -56,12 +59,12 @@ export function buildMonthlyReport(employee: Employee, month: number, records: D
 }
 
 export const ANNUAL_HEADERS = [
-  'Employee', 'Normal working days', 'Days worked', 'Worked hours', 'Vacation days', 'Vacation hours',
+  'Employee', 'Normal working days', 'Holidays', 'Days worked', 'Worked hours', 'Vacation days', 'Vacation hours',
   'Sick leave days', 'Sick leave hours', 'Manual work days',
 ];
 
 export function annualRow(name: string, t: Totals): (string | number)[] {
-  return [name, t.normalWorkingDays, t.daysWorked, fmt(t.workedHours), fmt(t.vacationDays), fmt(t.vacationHours),
+  return [name, t.normalWorkingDays, t.holidayDays, t.daysWorked, fmt(t.workedHours), fmt(t.vacationDays), fmt(t.vacationHours),
     fmt(t.sickDays), fmt(t.sickHours), t.manualWorkDays];
 }
 

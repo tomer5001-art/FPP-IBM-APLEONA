@@ -7,6 +7,8 @@ React + TypeScript + Vite, Supabase (Postgres) as the cloud database, installabl
 
 - **Sunday–Thursday** are working days. Each one is automatically treated as **Present 08:00–16:30** (8.5 hours). Nobody needs to report a normal day.
 - **Friday and Saturday** have no automatic hours. Employees can enter manual work on Friday. Only the administrator can enter Saturday work.
+- **Holidays**: no automatic work, and vacation or sick leave cannot be recorded on them. They are not counted as working days.
+- **Holiday eves**: automatic work until **14:00** (08:00–14:00 = 6 hours). The time can be changed in Settings.
 - Only **exceptions** are stored in the database (vacation, sick leave, manual hours, notes). No rows are created for normal days.
 - Partial leave is converted into a day fraction of the normal day: `hours / 8.5`. For example, 4.25 hours = 0.5 day.
 - Statuses: Present, Vacation, Sick Leave, Partial Vacation, Partial Sick Leave, Manual Work, No Work.
@@ -59,6 +61,7 @@ npm run test:db    # database tests against a real Postgres (see "Tests")
      1. `20260101000001_schema.sql` (tables)
      2. `20260101000002_functions.sql` (server-side API and permissions)
      3. `20260101000003_seed.sql` (settings and the three employees)
+     4. `20260101000004_holidays.sql` (holidays, holiday eves and the 14:00 eve rule)
    - **Supabase CLI**: `npx supabase link --project-ref <your-ref>` then `npx supabase db push`.
 3. In *Project Settings → API*, copy the **Project URL** and the **anon / publishable key** into `.env`:
    ```
@@ -96,30 +99,33 @@ HTTPS is required for the PWA install prompt.
 | `employees` | name, role (`admin`/`employee`), bcrypt PIN hash, active flag, lockout counters |
 | `attendance_records` | one row per employee-day **exception**: status, work start/end, notes |
 | `leave_records` | vacation/sick for that day: full day or start/end, hours |
-| `app_settings` | single row: year, default start and end time |
+| `app_settings` | single row: year, default start and end time, holiday eve end time |
+| `holidays` | date, name, type (`holiday` or `eve`), editable by the admin |
 | `audit_log` | who/when/previous value/new value for every change |
 | `sessions` | hashed login tokens (30 days) |
 
-Server API (RPC functions): `list_login_employees`, `login`, `logout`, `get_app_data`, `save_day`, `reset_day`, `update_settings`, `save_employee`, `get_audit_log`.
+Server API (RPC functions): `list_login_employees`, `login`, `logout`, `get_app_data`, `save_day`, `reset_day`, `update_settings`, `save_employee`, `get_audit_log`, `save_holiday`, `delete_holiday`.
 
 ## Tests
 
-- `npm test` runs 38 unit tests:
+- `npm test` runs 51 unit tests:
   - date rules for all of 2026
   - automatic days
   - full and partial vacation
   - full and partial sick leave
   - Friday manual work
+  - holidays and holiday eves
   - monthly and annual totals
   - CSV export
   - permissions in the demo backend
-- `npm run test:db` runs 24 tests against **real Postgres** with the actual migrations. It covers:
+- `npm run test:db` runs 29 tests against **real Postgres** with the actual migrations. It covers:
   - PIN hashing and lockout
   - no direct table access for the public role
   - employee isolation
   - admin-only functions
   - Saturday rule
   - leave records and audit log
+  - holidays, holiday eves and admin-only holiday management
   - adding employees, PIN change, deactivation
   - last-admin protection
 
@@ -156,6 +162,28 @@ attendance-tracker/
 
 ## Known limitations
 
-- **Israeli public holidays are not built in.** On a holiday, the admin or employee should mark the day as **No Work**.
+- Holidays seeded for 2026:
+
+  | Date | Holiday | Type |
+  |---|---|---|
+  | 01/04 Wed | Erev Pesach | eve |
+  | 02/04 Thu | Pesach | holiday |
+  | 07/04 Tue | Erev Seventh Day of Pesach | eve |
+  | 08/04 Wed | Seventh Day of Pesach | holiday |
+  | 22/04 Wed | Independence Day | holiday |
+  | 21/05 Thu | Erev Shavuot | eve |
+  | 22/05 Fri | Shavuot | holiday |
+  | 11/09 Fri | Erev Rosh Hashana | eve |
+  | 12/09 Sat | Rosh Hashana | holiday |
+  | 13/09 Sun | Rosh Hashana (second day) | holiday |
+  | 20/09 Sun | Erev Yom Kippur | eve |
+  | 21/09 Mon | Yom Kippur | holiday |
+  | 25/09 Fri | Erev Sukkot | eve |
+  | 26/09 Sat | Sukkot | holiday |
+  | 02/10 Fri | Erev Simchat Torah | eve |
+  | 03/10 Sat | Simchat Torah | holiday |
+
+  Chol HaMoed, Memorial Day eve and election day are not included. The admin can add them in **Settings → Holidays**.
+- Full vacation on a holiday eve counts as 1 vacation day (6 hours). Partial leave is always a fraction of the normal 8.5-hour day.
 - Changing the default working hours in Settings also changes how past automatic days are counted, because normal days are not stored.
 - Demo mode is per browser and only for trying the app.

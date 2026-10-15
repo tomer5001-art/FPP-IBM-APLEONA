@@ -20,6 +20,8 @@
   --manual-ink: #5b34b0;
   --weekend: #eef0f3;
   --weekend-ink: #7a8594;
+  --holiday: #ffe9dc;
+  --holiday-ink: #a8440f;
   --nowork: #f3f4f6;
   --nowork-ink: #475569;
 
@@ -124,6 +126,7 @@ input:focus, select:focus, .btn:focus-visible { outline: 2px solid #8fb2ea; outl
 .ind-manual   { background: var(--manual);   color: var(--manual-ink); }
 .ind-weekend  { background: var(--weekend);  color: var(--weekend-ink); }
 .ind-no_work  { background: var(--nowork);   color: var(--nowork-ink); }
+.ind-holiday  { background: var(--holiday);  color: var(--holiday-ink); }
 .badge { display: inline-block; padding: 2px 10px; border-radius: 99px; font-size: 0.8rem; font-weight: 600; white-space: nowrap; }
 .legend { display: flex; flex-wrap: wrap; gap: 8px 16px; margin: 12px 0 8px; font-size: 0.85rem; color: var(--muted); }
 .legend-item { display: inline-flex; align-items: center; gap: 6px; }
@@ -144,6 +147,7 @@ input:focus, select:focus, .btn:focus-visible { outline: 2px solid #8fb2ea; outl
 .cal-status { font-size: 0.75rem; font-weight: 600; line-height: 1.2; }
 .cal-hours { font-size: 0.72rem; opacity: 0.85; }
 .cal-short { display: none; font-size: 0.62rem; font-weight: 600; }
+.cal-eve { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%; }
 .cal-note { position: absolute; top: 4px; right: 6px; font-size: 0.6rem; }
 
 /* Dashboard ----------------------------------------------------------------- */
@@ -209,6 +213,19 @@ input:focus, select:focus, .btn:focus-visible { outline: 2px solid #8fb2ea; outl
 }
 .row-msg { grid-column: 1 / -1; }
 
+/* Holidays --------------------------------------------------------------- */
+.holiday-list { list-style: none; margin: 0; padding: 0; }
+.holiday-list li { display: grid; grid-template-columns: 130px 1fr auto auto; gap: 10px; align-items: center; padding: 6px 0; border-bottom: 1px solid var(--border); }
+.holiday-list li:last-child { border-bottom: 0; }
+.holiday-name { min-width: 0; overflow-wrap: anywhere; }
+.holiday-form { display: grid; grid-template-columns: 1fr 2fr 1.4fr auto; gap: 10px; align-items: end; }
+@media (max-width: 600px) {
+  .holiday-list li { grid-template-columns: 1fr auto; }
+  .holiday-list .holiday-name { grid-column: 1 / -1; grid-row: 2; }
+  .holiday-list li > .badge { display: none; }
+  .holiday-form { grid-template-columns: 1fr; }
+}
+
 /* Modal ------------------------------------------------------------------- */
 .modal-backdrop {
   position: fixed; inset: 0; background: rgba(15, 23, 42, 0.45); z-index: 50;
@@ -220,6 +237,7 @@ input:focus, select:focus, .btn:focus-visible { outline: 2px solid #8fb2ea; outl
 }
 .modal-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; margin-bottom: 12px; }
 .modal-head h2 { margin: 0; }
+.modal-head .badge { margin-top: 6px; white-space: normal; }
 .modal .form { margin-top: 16px; padding-top: 16px; border-top: 1px solid var(--border); }
 .modal .form h3 { margin: 0; }
 .record-summary { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }

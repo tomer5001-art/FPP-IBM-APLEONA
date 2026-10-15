@@ -11,6 +11,7 @@ const SHORT: Record<string, string> = {
   manual: 'Man',
   no_work: 'Off',
   weekend: '',
+  holiday: 'Hol',
 };
 
 /** One month grid, weeks start on Sunday. */
@@ -42,8 +43,9 @@ export function MonthCalendar({ days, onSelect }: { days: ComputedDay[]; onSelec
           >
             <span className="cal-num">{n}</span>
             <span className="cal-status">{dayLabel(day)}</span>
-            <span className="cal-short">{SHORT[day.indicator]}</span>
+            <span className="cal-short">{day.kind === 'eve' && day.indicator === 'present' ? 'Eve' : SHORT[day.indicator]}</span>
             {hours && <span className="cal-hours">{hours}</span>}
+            {day.kind === 'eve' && day.holidayName && <span className="cal-hours cal-eve">{day.holidayName}</span>}
             {day.notes && <span className="cal-note" title={day.notes}>●</span>}
           </button>
         );

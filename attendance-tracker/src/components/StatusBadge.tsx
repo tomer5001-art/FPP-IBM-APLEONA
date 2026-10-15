@@ -9,9 +9,11 @@ export const INDICATOR_LABELS: Record<Indicator, string> = {
   manual: 'Manual Work',
   no_work: 'No Work',
   weekend: 'Weekend',
+  holiday: 'Holiday',
 };
 
 export function dayLabel(day: ComputedDay): string {
+  if (day.indicator === 'holiday') return day.holidayName ?? 'Holiday';
   if (day.indicator === 'weekend') return 'Weekend';
   return STATUS_LABELS[day.status];
 }
@@ -21,7 +23,7 @@ export function StatusBadge({ day }: { day: ComputedDay }) {
 }
 
 export function Legend() {
-  const items: Indicator[] = ['present', 'vacation', 'sick', 'partial', 'manual', 'weekend'];
+  const items: Indicator[] = ['present', 'vacation', 'sick', 'partial', 'manual', 'holiday', 'weekend'];
   return (
     <div className="legend" aria-label="Legend">
       {items.map((i) => (

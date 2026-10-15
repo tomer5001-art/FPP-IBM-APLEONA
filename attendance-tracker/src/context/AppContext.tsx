@@ -1,7 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { api, ApiError } from '../api';
 import { errorMessage } from '../lib/attendance';
-import type { AppData, Employee, SaveDayInput, SaveEmployeeInput } from '../lib/types';
+import type { AppData, Employee, Holiday, SaveDayInput, SaveEmployeeInput } from '../lib/types';
 
 const TOKEN_KEY = 'attendance-2026-token';
 
@@ -13,7 +13,9 @@ interface AppContextValue {
   saveDay(input: SaveDayInput): Promise<void>;
   saveDays(inputs: SaveDayInput[]): Promise<void>;
   resetDay(employeeId: string, date: string): Promise<void>;
-  updateSettings(start: string, end: string): Promise<void>;
+  updateSettings(start: string, end: string, eveEnd: string): Promise<void>;
+  saveHoliday(holiday: Holiday): Promise<void>;
+  deleteHoliday(date: string): Promise<void>;
   saveEmployee(input: SaveEmployeeInput): Promise<void>;
   token: string;
   logout(): void;
@@ -120,7 +122,9 @@ export function AppProvider({ children, signedIn }: ProviderProps) {
           for (const input of inputs) await api.saveDay(token, input);
         }),
       resetDay: (employeeId, date) => run(() => api.resetDay(token, employeeId, date)),
-      updateSettings: (s, e) => run(() => api.updateSettings(token, s, e)),
+      updateSettings: (s, e, eve) => run(() => api.updateSettings(token, s, e, eve)),
+      saveHoliday: (h) => run(() => api.saveHoliday(token, h)),
+      deleteHoliday: (date) => run(() => api.deleteHoliday(token, date)),
       saveEmployee: (input) => run(() => api.saveEmployee(token, input)),
       logout,
     };

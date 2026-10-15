@@ -65,8 +65,16 @@ export function createSupabaseApi(url: string, key: string): Api {
       await rpc('reset_day', { p_token: token, p_employee_id: employeeId, p_date: date });
     },
 
-    async updateSettings(token, defaultStart, defaultEnd) {
-      await rpc('update_settings', { p_token: token, p_default_start: defaultStart, p_default_end: defaultEnd });
+    async updateSettings(token, defaultStart, defaultEnd, eveEnd) {
+      await rpc('update_settings', { p_token: token, p_default_start: defaultStart, p_default_end: defaultEnd, p_eve_end: eveEnd });
+    },
+
+    async saveHoliday(token, h) {
+      await rpc('save_holiday', { p_token: token, p_date: h.date, p_name: h.name, p_kind: h.kind });
+    },
+
+    async deleteHoliday(token, date) {
+      await rpc('delete_holiday', { p_token: token, p_date: date });
     },
 
     async saveEmployee(token, i) {

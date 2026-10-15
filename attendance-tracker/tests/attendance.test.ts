@@ -10,7 +10,7 @@ import {
   validateDay,
 } from '../src/lib/attendance';
 import { dayOfWeek, isNormalWorkday, monthDates, yearDates } from '../src/lib/dates';
-import { EMP, rec, SETTINGS } from './helpers';
+import { EMP, rec, SETTINGS, SETTINGS_IL } from './helpers';
 
 describe('dates 2026', () => {
   it('knows every date of 2026', () => {
@@ -206,27 +206,27 @@ describe('validation', () => {
   const base = { employeeId: EMP };
   it('rejects Saturday work for employees but allows admin', () => {
     const input = { ...base, date: '2026-01-03', status: 'manual' as const, startTime: '09:00', endTime: '12:00' };
-    expect(validateDay(input, false)).toBe('saturday_admin_only');
-    expect(validateDay(input, true)).toBeNull();
+    expect(validateDay(input, false, SETTINGS)).toBe('saturday_admin_only');
+    expect(validateDay(input, true, SETTINGS)).toBeNull();
   });
   it('allows Friday manual work for employees', () => {
-    expect(validateDay({ ...base, date: '2026-01-02', status: 'manual', startTime: '08:00', endTime: '12:00' }, false)).toBeNull();
+    expect(validateDay({ ...base, date: '2026-01-02', status: 'manual', startTime: '08:00', endTime: '12:00' }, false, SETTINGS)).toBeNull();
   });
   it('rejects leave on Friday', () => {
-    expect(validateDay({ ...base, date: '2026-01-02', status: 'vacation' }, false)).toBe('leave_requires_workday');
+    expect(validateDay({ ...base, date: '2026-01-02', status: 'vacation' }, false, SETTINGS)).toBe('leave_requires_workday');
   });
   it('requires hours for manual work and partial leave', () => {
-    expect(validateDay({ ...base, date: '2026-01-04', status: 'manual' }, false)).toBe('work_time_required');
-    expect(validateDay({ ...base, date: '2026-01-04', status: 'partial_vacation' }, false)).toBe('leave_time_required');
+    expect(validateDay({ ...base, date: '2026-01-04', status: 'manual' }, false, SETTINGS)).toBe('work_time_required');
+    expect(validateDay({ ...base, date: '2026-01-04', status: 'partial_vacation' }, false, SETTINGS)).toBe('leave_time_required');
   });
   it('rejects reversed and overlapping times', () => {
-    expect(validateDay({ ...base, date: '2026-01-04', status: 'manual', startTime: '15:00', endTime: '08:00' }, false)).toBe('work_time_invalid');
+    expect(validateDay({ ...base, date: '2026-01-04', status: 'manual', startTime: '15:00', endTime: '08:00' }, false, SETTINGS)).toBe('work_time_invalid');
     expect(
-      validateDay({ ...base, date: '2026-01-04', status: 'partial_sick', startTime: '08:00', endTime: '13:00', leaveStart: '12:00', leaveEnd: '16:30' }, false),
+      validateDay({ ...base, date: '2026-01-04', status: 'partial_sick', startTime: '08:00', endTime: '13:00', leaveStart: '12:00', leaveEnd: '16:30' }, false, SETTINGS),
     ).toBe('time_overlap');
   });
   it('rejects dates outside 2026', () => {
-    expect(validateDay({ ...base, date: '2025-12-31', status: 'vacation' }, true)).toBe('date_out_of_range');
+    expect(validateDay({ ...base, date: '2025-12-31', status: 'vacation' }, true, SETTINGS)).toBe('date_out_of_range');
   });
 });
 
@@ -239,5 +239,78 @@ describe('helpers', () => {
   it('suggests the working part of a partial day', () => {
     expect(suggestWorkForLeave('12:00', '16:30', SETTINGS)).toEqual({ start: '08:00', end: '12:00' });
     expect(suggestWorkForLeave('08:00', '10:00', SETTINGS)).toEqual({ start: '10:00', end: '16:30' });
+  });
+});
+
+describe('holidays and holiday eves', () => {
+  it('2026 has 256 working days after 5 weekday holidays', () => {
+    const t = summarize(computeYear([], EMP, SETTINGS_IL));
+    expect(t.normalWorkingDays).toBe(256);
+    expect(t.holidayDays).toBe(5); // Pesach, 7th of Pesach, Independence Day, Rosh Hashana II, Yom Kippur
+    expect(t.daysWorked).toBe(256);
+  });
+
+  it('a holiday has no automatic work', () => {
+    const d = resolveDay('2026-04-02', undefined, SETTINGS_IL);
+    expect(d.kind).toBe('holiday');
+    expect(d.indicator).toBe('holiday');
+    expect(d.holidayName).toBe('Pesach');
+    expect(d.workedHours).toBe(0);
+    expect(d.isNormalWorkday).toBe(false);
+  });
+
+  it('a holiday eve is worked 08:00-14:00', () => {
+    const d = resolveDay('2026-04-01', undefined, SETTINGS_IL);
+    expect(d.kind).toBe('eve');
+    expect(d.status).toBe('present');
+    expect(d.startTime).toBe('08:00');
+    expect(d.endTime).toBe('14:00');
+    expect(d.workedHours).toBe(6);
+    expect(d.isNormalWorkday).toBe(true);
+  });
+
+  it('eve end time follows the setting', () => {
+    expect(resolveDay('2026-09-20', undefined, { ...SETTINGS_IL, eveEnd: '13:00' }).workedHours).toBe(5);
+  });
+
+  it('full vacation on an eve counts 1 day of 6 hours', () => {
+    const d = resolveDay('2026-04-01', rec('2026-04-01', 'vacation'), SETTINGS_IL);
+    expect(d.vacationDays).toBe(1);
+    expect(d.vacationHours).toBe(6);
+    expect(d.workedHours).toBe(0);
+  });
+
+  it('partial vacation on an eve uses the 8.5 hour day for the fraction', () => {
+    expect(suggestWorkForLeave('12:00', '14:00', SETTINGS_IL, '2026-04-01')).toEqual({ start: '08:00', end: '12:00' });
+    const d = resolveDay(
+      '2026-04-01',
+      rec('2026-04-01', 'partial_vacation', { startTime: '08:00', endTime: '12:00', leaveStart: '12:00', leaveEnd: '14:00' }),
+      SETTINGS_IL,
+    );
+    expect(d.workedHours).toBe(4);
+    expect(d.vacationHours).toBe(2);
+    expect(d.vacationDays).toBeCloseTo(2 / 8.5, 6);
+  });
+
+  it('April 2026: 19 working days, 156.5 hours', () => {
+    const t = summarize(computeMonth(4, [], EMP, SETTINGS_IL));
+    expect(t.normalWorkingDays).toBe(19);
+    expect(t.holidayDays).toBe(3);
+    expect(t.workedHours).toBe(17 * 8.5 + 2 * 6);
+  });
+
+  it('leave cannot be recorded on a holiday, manual work can', () => {
+    expect(validateDay({ employeeId: EMP, date: '2026-09-21', status: 'vacation' }, false, SETTINGS_IL)).toBe('leave_requires_workday');
+    expect(validateDay({ employeeId: EMP, date: '2026-09-21', status: 'manual', startTime: '09:00', endTime: '12:00' }, false, SETTINGS_IL)).toBeNull();
+    expect(validateDay({ employeeId: EMP, date: '2026-09-20', status: 'vacation' }, false, SETTINGS_IL)).toBeNull();
+    const d = resolveDay('2026-09-21', rec('2026-09-21', 'manual', { startTime: '09:00', endTime: '12:00' }), SETTINGS_IL);
+    expect(d.workedHours).toBe(3);
+  });
+
+  it('Saturday holiday stays a non-working day', () => {
+    const d = resolveDay('2026-09-12', undefined, SETTINGS_IL);
+    expect(d.indicator).toBe('holiday');
+    expect(d.holidayName).toBe('Rosh Hashana');
+    expect(validateDay({ employeeId: EMP, date: '2026-09-12', status: 'manual', startTime: '09:00', endTime: '12:00' }, false, SETTINGS_IL)).toBe('saturday_admin_only');
   });
 });

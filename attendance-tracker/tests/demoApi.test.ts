@@ -44,7 +44,7 @@ describe('demo backend permissions', () => {
 
   it('employee cannot use admin functions', async () => {
     const jon = await signIn('Jonatan Ben Sudai', '1111');
-    await expect(api.updateSettings(jon, '07:00', '15:00')).rejects.toMatchObject({ code: 'forbidden' });
+    await expect(api.updateSettings(jon, '07:00', '15:00', '13:00')).rejects.toMatchObject({ code: 'forbidden' });
     await expect(api.saveEmployee(jon, { id: null, fullName: 'X', role: 'admin', active: true, pin: '1234' })).rejects.toMatchObject({ code: 'forbidden' });
   });
 
@@ -56,6 +56,24 @@ describe('demo backend permissions', () => {
     expect(d.records).toHaveLength(1);
     const log = await api.getAuditLog(tomer, null);
     expect(log[0]).toMatchObject({ changedByName: 'Tomer Cohen', action: 'update', recordDate: '2026-01-03', previousValue: null });
+  });
+
+  it('only the admin can manage holidays', async () => {
+    const nir = await signIn('Nir Ben Haim', '2222');
+    await expect(api.saveHoliday(nir, { date: '2026-10-27', name: 'Election Day', kind: 'holiday' })).rejects.toMatchObject({ code: 'forbidden' });
+    const tomer = await signIn('Tomer Cohen', '0000');
+    await api.saveHoliday(tomer, { date: '2026-10-27', name: 'Election Day', kind: 'holiday' });
+    const d = await api.getAppData(nir);
+    expect(d.settings.holidays.find((h) => h.date === '2026-10-27')?.name).toBe('Election Day');
+    expect(d.settings.holidays).toHaveLength(17);
+    await api.deleteHoliday(tomer, '2026-10-27');
+    expect((await api.getAppData(nir)).settings.holidays).toHaveLength(16);
+  });
+
+  it('saving a default eve day stores nothing', async () => {
+    const nir = await signIn('Nir Ben Haim', '2222');
+    await api.saveDay(nir, { employeeId: ids['Nir Ben Haim'], date: '2026-04-01', status: 'present', startTime: '08:00', endTime: '14:00' });
+    expect((await api.getAppData(nir)).records).toHaveLength(0);
   });
 
   it('saving the default day stores nothing', async () => {

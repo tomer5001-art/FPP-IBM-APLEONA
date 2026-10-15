@@ -89,7 +89,7 @@ describe.skipIf(!baseUrl)('database RPC functions', () => {
     it('the public role cannot read tables directly', async () => {
       await db.query('set role anon');
       try {
-        for (const t of ['employees', 'attendance_records', 'leave_records', 'audit_log', 'sessions', 'app_settings']) {
+        for (const t of ['employees', 'attendance_records', 'leave_records', 'audit_log', 'sessions', 'app_settings', 'holidays']) {
           await expect(db.query(`select * from public.${t}`)).rejects.toThrow(/permission denied/);
         }
         await expect(db.query(`select public._current_employee('x')`)).rejects.toThrow(/permission denied/);
@@ -238,6 +238,54 @@ describe.skipIf(!baseUrl)('database RPC functions', () => {
       const d = await rpc('get_app_data', { p_token: tomer });
       expect(d.last_changes.length).toBeGreaterThanOrEqual(2);
       expect(d.employees).toHaveLength(4);
+    });
+  });
+
+  describe('holidays', () => {
+    it('seeds the 2026 holidays and the 14:00 eve end', async () => {
+      const d = await rpc('get_app_data', { p_token: nir });
+      expect(d.settings.eve_end).toBe('14:00');
+      expect(d.holidays).toHaveLength(16);
+      expect(d.holidays.find((h: { date: string }) => h.date === '2026-09-21')).toMatchObject({ name: 'Yom Kippur', kind: 'holiday' });
+      expect(d.holidays.find((h: { date: string }) => h.date === '2026-09-20')).toMatchObject({ name: 'Erev Yom Kippur', kind: 'eve' });
+    });
+
+    it('leave is rejected on a holiday, manual work is allowed', async () => {
+      const base = { p_token: nir, p_employee_id: ids['Nir Ben Haim'] };
+      expect(await rpcError('save_day', { ...base, p_date: '2026-09-21', p_status: 'vacation' })).toBe('leave_requires_workday');
+      await rpc('save_day', { ...base, p_date: '2026-09-21', p_status: 'manual', p_start: '09:00', p_end: '11:00' });
+      await rpc('reset_day', { ...base, p_date: '2026-09-21' });
+    });
+
+    it('vacation on a holiday eve stores the short day hours', async () => {
+      const base = { p_token: nir, p_employee_id: ids['Nir Ben Haim'] };
+      await rpc('save_day', { ...base, p_date: '2026-09-20', p_status: 'vacation' });
+      const { rows } = await db.query(`select hours::float from leave_records where employee_id = $1 and leave_date = '2026-09-20'`, [ids['Nir Ben Haim']]);
+      expect(rows[0].hours).toBe(6);
+      // The default eve day (08:00-14:00) is not stored.
+      await rpc('save_day', { ...base, p_date: '2026-09-20', p_status: 'present', p_start: '08:00', p_end: '14:00' });
+      const after = await db.query(`select 1 from attendance_records where employee_id = $1 and work_date = '2026-09-20'`, [ids['Nir Ben Haim']]);
+      expect(after.rows).toHaveLength(0);
+    });
+
+    it('only the admin can add, change and remove holidays', async () => {
+      expect(await rpcError('save_holiday', { p_token: nir, p_date: '2026-10-27', p_name: 'Election Day', p_kind: 'holiday' })).toBe('forbidden');
+      expect(await rpcError('delete_holiday', { p_token: jon, p_date: '2026-09-21' })).toBe('forbidden');
+      await rpc('save_holiday', { p_token: tomer, p_date: '2026-10-27', p_name: 'Election Day', p_kind: 'holiday' });
+      expect(await rpcError('save_day', { p_token: nir, p_employee_id: ids['Nir Ben Haim'], p_date: '2026-10-27', p_status: 'sick' })).toBe('leave_requires_workday');
+      expect(await rpcError('save_holiday', { p_token: tomer, p_date: '2026-10-27', p_name: 'X', p_kind: 'party' })).toBe('invalid_kind');
+      await rpc('delete_holiday', { p_token: tomer, p_date: '2026-10-27' });
+      expect((await rpc('get_app_data', { p_token: nir })).holidays).toHaveLength(16);
+      const log = await rpc('get_audit_log', { p_token: tomer, p_employee_id: null, p_limit: 10 });
+      expect(log[0]).toMatchObject({ entity: 'holiday', action: 'delete', record_date: '2026-10-27', changed_by_name: 'Tomer Cohen' });
+      expect(log[1]).toMatchObject({ entity: 'holiday', action: 'create' });
+    });
+
+    it('admin can change the eve end time', async () => {
+      await rpc('update_settings', { p_token: tomer, p_default_start: '08:00', p_default_end: '16:30', p_eve_end: '13:00' });
+      expect((await rpc('get_app_data', { p_token: nir })).settings.eve_end).toBe('13:00');
+      expect(await rpcError('update_settings', { p_token: tomer, p_default_start: '08:00', p_default_end: '16:30', p_eve_end: '07:00' })).toBe('work_time_invalid');
+      await rpc('update_settings', { p_token: tomer, p_default_start: '08:00', p_default_end: '16:30', p_eve_end: '14:00' });
     });
   });
 

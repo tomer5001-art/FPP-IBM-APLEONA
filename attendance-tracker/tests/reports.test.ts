@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { tablesToCsv } from '../src/lib/export';
 import { buildAnnualReport, buildMonthlyReport } from '../src/lib/reports';
 import type { Employee } from '../src/lib/types';
-import { EMP, rec, SETTINGS } from './helpers';
+import { EMP, rec, SETTINGS, SETTINGS_IL } from './helpers';
 
 const employee: Employee = { id: EMP, fullName: 'Nir Ben Haim', role: 'employee', active: true };
 
@@ -54,9 +54,24 @@ describe('annual report', () => {
     const other: Employee = { id: 'emp-2', fullName: 'Jonatan Ben Sudai', role: 'employee', active: true };
     const records = [rec('2026-01-05', 'vacation'), rec('2026-05-10', 'sick'), { ...rec('2026-02-01', 'vacation'), employeeId: 'emp-2' }];
     const r = buildAnnualReport([employee, other], records, SETTINGS);
-    expect(r.summary.rows[0]).toEqual(['Nir Ben Haim', 261, 259, '2201.5', '1', '8.5', '1', '8.5', 0]);
-    expect(r.summary.rows[1][4]).toBe('1');
+    expect(r.summary.rows[0]).toEqual(['Nir Ben Haim', 261, 0, 259, '2201.5', '1', '8.5', '1', '8.5', 0]);
+    expect(r.summary.rows[1][5]).toBe('1');
     expect(r.breakdowns[0].rows).toHaveLength(13);
     expect(r.breakdowns[0].rows[12][0]).toBe('Total 2026');
+  });
+});
+
+describe('reports with holidays', () => {
+  it('labels holidays and eves in the monthly report', () => {
+    const r = buildMonthlyReport(employee, 4, [], SETTINGS_IL);
+    expect(r.table.rows[0].slice(0, 5)).toEqual(['01/04/2026', 'Wednesday', 'Present (Erev Pesach)', '08:00', '14:00']);
+    expect(r.table.rows[0][5]).toBe('6');
+    expect(r.table.rows[1].slice(0, 3)).toEqual(['02/04/2026', 'Thursday', 'Holiday - Pesach']);
+    expect(r.totals.daysWorked).toBe(19);
+  });
+
+  it('annual report shows holidays and fewer working days', () => {
+    const r = buildAnnualReport([employee], [], SETTINGS_IL);
+    expect(r.summary.rows[0].slice(0, 4)).toEqual(['Nir Ben Haim', 256, 5, 256]);
   });
 });

@@ -14,7 +14,8 @@ function describeValue(entry: AuditEntry, v: any): string {
     if (v.notes) parts.push(`"${v.notes}"`);
     return parts.join(' · ');
   }
-  if (entry.entity === 'settings') return `${v.default_start}-${v.default_end}`;
+  if (entry.entity === 'settings') return `${v.default_start}-${v.default_end}${v.eve_end ? ` · eve until ${v.eve_end}` : ''}`;
+  if (entry.entity === 'holiday') return `${v.name} (${v.kind === 'eve' ? 'holiday eve' : 'holiday'})`;
   const parts = [v.full_name, v.role, v.active ? 'active' : 'inactive'];
   if (v.pin_changed) parts.push('PIN changed');
   return parts.join(' · ');
@@ -42,8 +43,14 @@ export function ChangeList({ employeeId, limit = 50 }: { employeeId: string | nu
         <li key={e.id}>
           <div className="change-meta">
             <strong>
-              {e.entity === 'day' && e.recordDate ? `Day ${formatDate(e.recordDate)}` : e.entity === 'settings' ? 'Settings' : 'Employee'}
-              {e.employeeName && e.entity !== 'settings' ? ` · ${e.employeeName}` : ''}
+              {e.entity === 'day' && e.recordDate
+                ? `Day ${formatDate(e.recordDate)}`
+                : e.entity === 'holiday' && e.recordDate
+                  ? `Holiday ${formatDate(e.recordDate)}`
+                  : e.entity === 'settings'
+                    ? 'Settings'
+                    : 'Employee'}
+              {e.employeeName && (e.entity === 'day' || e.entity === 'employee') ? ` · ${e.employeeName}` : ''}
             </strong>
             <span className="muted small">
               {formatDateTime(e.changedAt)} by {e.changedByName}

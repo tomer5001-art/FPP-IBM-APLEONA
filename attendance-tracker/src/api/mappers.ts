@@ -30,6 +30,8 @@ export function mapAppData(d: any): AppData {
       year: d.settings.year,
       defaultStart: d.settings.default_start,
       defaultEnd: d.settings.default_end,
+      eveEnd: d.settings.eve_end ?? '14:00',
+      holidays: (d.holidays ?? []).map((h: any) => ({ date: h.date, name: h.name, kind: h.kind })),
     },
     employees: (d.employees ?? []).map(mapEmployee),
     records: (d.records ?? []).map(mapRecord),

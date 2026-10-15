@@ -1,4 +1,4 @@
-import type { AppData, AuditEntry, Employee, SaveDayInput, SaveEmployeeInput } from '../lib/types';
+import type { AppData, AuditEntry, Employee, Holiday, SaveDayInput, SaveEmployeeInput } from '../lib/types';
 
 export class ApiError extends Error {
   constructor(public code: string) {
@@ -20,7 +20,9 @@ export interface Api {
   getAppData(token: string): Promise<AppData>;
   saveDay(token: string, input: SaveDayInput): Promise<void>;
   resetDay(token: string, employeeId: string, date: string): Promise<void>;
-  updateSettings(token: string, defaultStart: string, defaultEnd: string): Promise<void>;
+  updateSettings(token: string, defaultStart: string, defaultEnd: string, eveEnd: string): Promise<void>;
+  saveHoliday(token: string, holiday: Holiday): Promise<void>;
+  deleteHoliday(token: string, date: string): Promise<void>;
   saveEmployee(token: string, input: SaveEmployeeInput): Promise<string>;
   getAuditLog(token: string, employeeId: string | null, limit?: number): Promise<AuditEntry[]>;
 }
