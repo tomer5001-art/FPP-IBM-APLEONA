@@ -62,6 +62,7 @@ npm run test:db    # database tests against a real Postgres (see "Tests")
      2. `20260101000002_functions.sql` (server-side API and permissions)
      3. `20260101000003_seed.sql` (settings and the three employees)
      4. `20260101000004_holidays.sql` (holidays, holiday eves and the 14:00 eve rule)
+     5. `20260101000005_eve_half_vacation.sql` (vacation on a holiday eve = half a day)
    - **Supabase CLI**: `npx supabase link --project-ref <your-ref>` then `npx supabase db push`.
 3. In *Project Settings → API*, copy the **Project URL** and the **anon / publishable key** into `.env`:
    ```
@@ -184,6 +185,6 @@ attendance-tracker/
   | 03/10 Sat | Simchat Torah | holiday |
 
   Chol HaMoed, Memorial Day eve and election day are not included. The admin can add them in **Settings → Holidays**.
-- Full vacation on a holiday eve counts as 1 vacation day (6 hours). Partial leave is always a fraction of the normal 8.5-hour day.
+- A full vacation day on a holiday eve counts as **half a vacation day** (4.25 hours). A full sick day on an eve counts as 1 sick day (6 hours). Partial leave is always a fraction of the normal 8.5-hour day.
 - Changing the default working hours in Settings also changes how past automatic days are counted, because normal days are not stored.
 - Demo mode is per browser and only for trying the app.

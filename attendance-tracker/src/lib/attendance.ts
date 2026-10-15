@@ -169,8 +169,9 @@ export function resolveDay(date: string, record: DayRecord | undefined, settings
       day.workedHours = hoursBetween(day.startTime, day.endTime);
       break;
     case 'vacation':
-      day.vacationHours = fullDay;
-      day.vacationDays = 1;
+      // A vacation day on a holiday eve counts as half a vacation day.
+      day.vacationDays = kind === 'eve' ? 0.5 : 1;
+      day.vacationHours = kind === 'eve' ? normal / 2 : fullDay;
       break;
     case 'sick':
       day.sickHours = fullDay;

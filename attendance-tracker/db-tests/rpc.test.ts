@@ -257,11 +257,15 @@ describe.skipIf(!baseUrl)('database RPC functions', () => {
       await rpc('reset_day', { ...base, p_date: '2026-09-21' });
     });
 
-    it('vacation on a holiday eve stores the short day hours', async () => {
+    it('vacation on a holiday eve is half a day, sick leave is the short day', async () => {
       const base = { p_token: nir, p_employee_id: ids['Nir Ben Haim'] };
+      await rpc('save_day', { ...base, p_date: '2026-04-07', p_status: 'sick' });
       await rpc('save_day', { ...base, p_date: '2026-09-20', p_status: 'vacation' });
-      const { rows } = await db.query(`select hours::float from leave_records where employee_id = $1 and leave_date = '2026-09-20'`, [ids['Nir Ben Haim']]);
-      expect(rows[0].hours).toBe(6);
+      const { rows } = await db.query(
+        `select leave_date::text, hours::float from leave_records where employee_id = $1 and leave_date in ('2026-04-07', '2026-09-20') order by leave_date`,
+        [ids['Nir Ben Haim']],
+      );
+      expect(rows).toEqual([{ leave_date: '2026-04-07', hours: 6 }, { leave_date: '2026-09-20', hours: 4.25 }]);
       // The default eve day (08:00-14:00) is not stored.
       await rpc('save_day', { ...base, p_date: '2026-09-20', p_status: 'present', p_start: '08:00', p_end: '14:00' });
       const after = await db.query(`select 1 from attendance_records where employee_id = $1 and work_date = '2026-09-20'`, [ids['Nir Ben Haim']]);

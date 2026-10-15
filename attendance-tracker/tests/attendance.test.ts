@@ -273,11 +273,24 @@ describe('holidays and holiday eves', () => {
     expect(resolveDay('2026-09-20', undefined, { ...SETTINGS_IL, eveEnd: '13:00' }).workedHours).toBe(5);
   });
 
-  it('full vacation on an eve counts 1 day of 6 hours', () => {
+  it('full vacation on an eve counts half a vacation day (4.25 hours)', () => {
     const d = resolveDay('2026-04-01', rec('2026-04-01', 'vacation'), SETTINGS_IL);
-    expect(d.vacationDays).toBe(1);
-    expect(d.vacationHours).toBe(6);
+    expect(d.vacationDays).toBe(0.5);
+    expect(d.vacationHours).toBe(4.25);
     expect(d.workedHours).toBe(0);
+  });
+
+  it('full sick day on an eve is still 1 sick day of 6 hours', () => {
+    const d = resolveDay('2026-04-01', rec('2026-04-01', 'sick'), SETTINGS_IL);
+    expect(d.sickDays).toBe(1);
+    expect(d.sickHours).toBe(6);
+  });
+
+  it('vacation range over an eve: 3 normal days + eve = 3.5 days', () => {
+    const records = ['2026-09-16', '2026-09-17', '2026-09-20', '2026-09-22'].map((d) => rec(d, 'vacation'));
+    const t = summarize(computeMonth(9, records, EMP, SETTINGS_IL));
+    expect(t.vacationDays).toBe(3.5);
+    expect(t.vacationHours).toBe(3 * 8.5 + 4.25);
   });
 
   it('partial vacation on an eve uses the 8.5 hour day for the fraction', () => {

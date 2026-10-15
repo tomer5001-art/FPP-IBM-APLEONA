@@ -7,6 +7,7 @@ import {
   errorMessage,
   fmt,
   hoursBetween,
+  dayKind,
   isWorkingDay,
   normalDayHours,
   suggestWorkForLeave,
@@ -62,6 +63,8 @@ export function ReportLeavePage() {
   const isFull = type === 'vacation' || type === 'sick';
   const isPartial = type === 'partial_vacation' || type === 'partial_sick';
   const fullDays = useMemo(() => (isFull ? workdaysBetween(from, to, settings) : []), [isFull, from, to, settings]);
+  const eveCount = fullDays.filter((d) => dayKind(d, settings) === 'eve').length;
+  const leaveDays = type === 'vacation' ? fullDays.length - eveCount / 2 : fullDays.length;
   const existing = fullDays.filter((d) => data.records.some((r) => r.employeeId === employeeId && r.date === d)).length;
 
   function pickType(t: ReportType) {
@@ -176,8 +179,9 @@ export function ReportLeavePage() {
         {isInYear(from) && !isFull && <p className="muted small">{formatLongDate(from)}</p>}
         {isFull && (
           <p className="muted small">
-            {fullDays.length} working day{fullDays.length === 1 ? '' : 's'} = {fullDays.length} {type === 'vacation' ? 'vacation' : 'sick'} day
-            {fullDays.length === 1 ? '' : 's'}. Fridays, Saturdays and holidays are skipped.
+            {fullDays.length} working day{fullDays.length === 1 ? '' : 's'} = {fmt(leaveDays)} {type === 'vacation' ? 'vacation' : 'sick'} day
+            {leaveDays === 1 ? '' : 's'}. Fridays, Saturdays and holidays are skipped.
+            {type === 'vacation' && eveCount > 0 && ` A holiday eve counts as half a day.`}
             {existing > 0 && ` ${existing} existing entr${existing === 1 ? 'y' : 'ies'} will be replaced.`}
           </p>
         )}
